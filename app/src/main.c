@@ -28,7 +28,6 @@
 #include "config.h"
 #include "state.h"
 #include "led.h"
-#include "sensor.h"
 
 LOG_MODULE_REGISTER(bikeshare, LOG_LEVEL_INF);
 
@@ -38,6 +37,7 @@ int main(void)
 
 	bike_config_init();
 	led_status_init();
+	button_input_init();
 	bike_state_init();
 	motion_sensor_init();
 

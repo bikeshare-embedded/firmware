@@ -13,4 +13,5 @@ enum led_status_pattern {
 int led_status_init(void);
 enum led_status_pattern led_status_pattern_for_state(enum bike_state_value state);
 enum led_status_pattern led_status_get_pattern(void);
+bool led_status_is_on(void);
 const char *led_status_pattern_name(enum led_status_pattern pattern);

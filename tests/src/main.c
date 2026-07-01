@@ -3,6 +3,8 @@
 
 #include <zephyr/ztest.h>
 
+#include "app_channels.h"
+#include "button_input.h"
 #include "bike_config.h"
 #include "bike_state.h"
 #include "led_status.h"
@@ -75,6 +77,71 @@ ZTEST(led_status, test_state_to_pattern_mapping)
 		      LED_STATUS_ERROR);
 }
 
+ZTEST(led_status, test_cached_pattern_is_applied_on_init)
+{
+	struct bike_state_msg msg = {
+		.state = BIKE_STATE_AVAILABLE,
+	};
+
+	zassert_ok(zbus_chan_pub(&bike_state_chan, &msg, K_MSEC(100)));
+	zassert_equal(led_status_get_pattern(), LED_STATUS_BLINK_SLOW);
+
+	zassert_ok(led_status_init());
+	zassert_equal(led_status_get_pattern(), LED_STATUS_BLINK_SLOW);
+	zassert_true(led_status_is_on()); // The LED should be on after init since the pattern is BLINK_SLOW, even when channel message was published before initialization.
+}
+
+ZTEST(button_input, test_publish_press_drives_state_machine)
+{
+	button_input_reset_debounce();
+	zassert_ok(bike_config_init());
+	zassert_ok(bike_config_set_id("BIKE_001"));
+	zassert_ok(bike_config_set_device_token("TOKEN"));
+	zassert_ok(bike_config_set_mqtt_host("broker.example.com"));
+	zassert_ok(bike_config_set_mqtt_port(1883));
+	zassert_ok(bike_config_set_apn("internet"));
+	zassert_ok(bike_state_init());
+	zassert_equal(bike_state_get(), BIKE_STATE_AVAILABLE);
+
+	zassert_ok(bike_state_authorize("RENTAL_003"));
+	zassert_equal(bike_state_get(), BIKE_STATE_RESERVED);
+
+	zassert_ok(button_input_publish_press(1234));
+	zassert_equal(bike_state_get(), BIKE_STATE_IN_USE);
+
+	zassert_ok(button_input_publish_press(5678));
+	zassert_equal(bike_state_get(), BIKE_STATE_AVAILABLE);
+}
+
+ZTEST(button_input, test_debounce_rejects_duplicate_press)
+{
+	button_input_reset_debounce();
+	zassert_ok(bike_config_init());
+	zassert_ok(bike_config_set_id("BIKE_002"));
+	zassert_ok(bike_config_set_device_token("TOKEN"));
+	zassert_ok(bike_config_set_mqtt_host("broker.example.com"));
+	zassert_ok(bike_config_set_mqtt_port(1883));
+	zassert_ok(bike_config_set_apn("internet"));
+	zassert_ok(bike_state_init());
+	zassert_equal(bike_state_get(), BIKE_STATE_AVAILABLE);
+
+	zassert_ok(bike_state_authorize("RENTAL_004"));
+	zassert_equal(bike_state_get(), BIKE_STATE_RESERVED);
+
+	zassert_ok(button_input_publish_press_debounced(1000)); // First press, should be accepted
+	zassert_equal(bike_state_get(), BIKE_STATE_IN_USE);
+
+	zassert_equal(button_input_publish_press_debounced(
+			      1000 + BUTTON_INPUT_DEBOUNCE_MS - 1), // Second press, within debounce period, should be rejected
+		      -EALREADY);
+	zassert_equal(bike_state_get(), BIKE_STATE_IN_USE); // State should remain IN_USE since the second press was rejected
+
+	zassert_ok(button_input_publish_press_debounced(
+		1000 + BUTTON_INPUT_DEBOUNCE_MS)); // Third press, after debounce period, should be accepted
+	zassert_equal(bike_state_get(), BIKE_STATE_AVAILABLE);
+}
+
 ZTEST_SUITE(bike_config, NULL, NULL, NULL, NULL, NULL);
 ZTEST_SUITE(bike_state, NULL, NULL, NULL, NULL, NULL);
 ZTEST_SUITE(led_status, NULL, NULL, NULL, NULL, NULL);
+ZTEST_SUITE(button_input, NULL, NULL, NULL, NULL, NULL);

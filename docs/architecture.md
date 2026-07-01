@@ -58,7 +58,7 @@ The MVP uses four logical channels:
 | `bike_state` | `bike_state` | `led_status`, `telemetry`, `mqtt_client` | Publishes authoritative state changes. |
 | `telemetry_sample` | `telemetry` | `mqtt_client` | Publishes periodic telemetry samples. |
 
-Message contents are implemented as compact C structs in `app/include/app_channels.h`. The current channel scaffolding covers button events, backend commands, state publications, and telemetry samples; button/backend/state are actively used by implemented modules, and `led_status` observes the state channel.
+Message contents are implemented as compact C structs in `app/include/app_channels.h`. The current channel scaffolding covers button events, backend commands, state publications, and telemetry samples; button/backend/state are actively used by implemented modules, `button_input` publishes button events, and `led_status` observes the state channel.
 
 ## State Machine
 
@@ -113,7 +113,7 @@ The physical button is the local trip control:
 - In `IN_USE`, a short press ends the trip and returns to `AVAILABLE`.
 - In `UNREGISTERED`, `AVAILABLE`, and `ERROR`, a short press is ignored and logged.
 
-The GPIO interrupt callback must not run state-machine logic directly. It should submit work that publishes `button_event` to zbus.
+The GPIO interrupt callback must not run state-machine logic directly. It should submit work that debounces the press and publishes `button_event` to zbus.
 
 ## LED Behavior
 
@@ -171,7 +171,7 @@ GNSS must not block trips, state transitions, MQTT connection, or the class demo
 ## Execution Model
 
 - `button_input` uses a GPIO interrupt only to detect the edge and schedule work.
-- Scheduled button work publishes `button_event`.
+- Scheduled button work debounces physical presses before publishing `button_event`.
 - `bike_state` subscribes to `button_event` and `backend_command` and owns all state transitions.
 - `bike_shell` can publish simulated backend commands and button events for native-simulation demos.
 - `led_status` observes `bike_state` and runs blink timing through Zephyr timers/work.

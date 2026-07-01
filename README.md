@@ -52,9 +52,10 @@ Implemented now:
 - Initial zbus channels for button events, backend commands, state changes, and telemetry samples.
 - Initial bike state machine for `UNREGISTERED`, `AVAILABLE`, `RESERVED`, and `IN_USE` flows.
 - `led_status` module that observes bike state changes and maps them to LED patterns, using `led0` when available and a logical fallback on host simulation.
+- `button_input` module that reads the physical `sw0` button, schedules work from the GPIO interrupt, debounces hardware presses, and publishes button events to zbus.
 - Zephyr Settings using `CONFIG_SETTINGS_RUNTIME` for development-time storage.
 - Board-specific app configuration: `native_sim` and `native_sim/native/64` own TAP/static-IP networking, while `nrf9160dk_nrf9160_ns` owns GPIO/UART/NVS persistence scaffolding.
-- Initial ZTEST/Twister application for config validation, core state transitions, and LED state-to-pattern mapping.
+- Initial ZTEST/Twister application for config validation, core state transitions, LED state-to-pattern mapping, LED cached-init behavior, button event publishing, and button debounce filtering.
 - Upstream Zephyr manifest pinned to `v4.4.0`.
 
 Main implementation gaps before the agreed MVP:
@@ -62,9 +63,9 @@ Main implementation gaps before the agreed MVP:
 - Migrate the final hardware target to nRF Connect SDK for nRF9160 LTE/GNSS support.
 - Validate NVS-backed Settings on hardware.
 - Validate LED GPIO behavior on nRF9160 DK hardware.
+- Validate physical button behavior on nRF9160 DK hardware.
 - Complete the `ERROR` fault path in the state machine.
-- Complete zbus users for telemetry, physical button, and MQTT.
-- Add GPIO button module using the `sw0` devicetree alias.
+- Complete zbus users for telemetry and MQTT.
 - Add MQTT over LTE.
 - Add best-effort GNSS telemetry.
 - Expand ZTEST/Twister suites for telemetry, timeout timing, and edge cases.
@@ -179,7 +180,7 @@ bikes/{bike_id}/commands
 
 ## Current Native Simulation Demo
 
-The current implementation can validate the configuration, state-machine flow, and logical LED state mapping without LTE, MQTT, physical button, GNSS, or NVS:
+The current implementation can validate the configuration, state-machine flow, logical LED state mapping, and button event flow without LTE, MQTT, GNSS, or NVS:
 
 ```text
 bike set id BIKE_001

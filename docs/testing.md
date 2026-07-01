@@ -33,7 +33,7 @@ Current recommended command for this workspace:
 west twister -p native_sim/native/64 -T bikeshare-firmware/tests
 ```
 
-The repository now has an initial `tests/` application for config validation, core state transitions, and LED state-to-pattern mapping. Additional suites are still planned for telemetry formatting and more backend edge cases.
+The repository now has an initial `tests/` application for config validation, core state transitions, LED state-to-pattern mapping, LED cached-init behavior, button event publishing, and button debounce filtering. Additional suites are still planned for telemetry formatting and more backend edge cases.
 
 ## Planned ZTEST Suites
 
@@ -42,6 +42,7 @@ The repository now has an initial `tests/` application for config validation, co
 | `bike_state` | Validate all state-machine transitions. | Boot rules, `AVAILABLE -> RESERVED`, `RESERVED -> IN_USE`, `IN_USE -> AVAILABLE`, error handling. Initial coverage exists. |
 | `backend_command` | Validate backend command handling. | Accept `RENT_AUTHORIZE` only in `AVAILABLE`, accept matching `RENT_CANCEL` only in `RESERVED`, reject duplicates/mismatches. Initial direct state coverage exists. |
 | `led_status` | Validate state-to-pattern mapping. | `UNREGISTERED=off`, `AVAILABLE=slow blink`, `RESERVED=fast blink`, `IN_USE=solid on`, `ERROR=SOS/error`. Initial coverage exists. |
+| `button_input` | Validate button event publishing into the state machine. | Published button events move `RESERVED -> IN_USE` and `IN_USE -> AVAILABLE`; duplicate presses inside the debounce window are ignored. Initial coverage exists. |
 | `bike_config` | Validate configuration handling. | Required fields, non-empty strings, valid `mqtt_port` in `1..65535`, invalid config keeps bike `UNREGISTERED`. Initial coverage exists. |
 | `telemetry` | Validate telemetry formatting logic. | Includes bike ID, state, `uptime_ms`, rental ID when active, trip duration, LTE status placeholder, GNSS fix/no-fix status. |
 
@@ -139,8 +140,8 @@ bike sim authorize RENTAL_001
 ```
 
 - Confirm state changes to `RESERVED` and LED fast-blinks.
-- Run `bike sim button` and confirm state changes to `IN_USE` and LED becomes solid on. Replace this with the board button after `button_input` is implemented.
-- Run `bike sim button` again and confirm state returns to `AVAILABLE` and LED slow-blinks. Replace this with the board button after `button_input` is implemented.
+- Press the board button and confirm state changes to `IN_USE` and LED becomes solid on.
+- Press the board button again and confirm state returns to `AVAILABLE` and LED slow-blinks.
 - Confirm MQTT event messages are published for reservation, trip start, and trip end.
 - Confirm telemetry messages are published periodically.
 - Confirm GNSS reports either a valid fix or an explicit no-fix status.
@@ -178,4 +179,4 @@ The demo is considered successful when:
 - GNSS fixes may be unavailable indoors or during short demos.
 - LTE registration depends on SIM, antenna, network coverage, and APN configuration.
 - Local Mosquitto must be reachable from the cellular network.
-- Current repository code implements the initial config/state/LED mapping test application. Hardware-dependent behavior and several planned suites are still pending.
+- Current repository code implements the initial config/state/LED/button test application. Hardware validation and several planned suites are still pending.

@@ -24,8 +24,6 @@ static const struct gpio_dt_spec led = GPIO_DT_SPEC_GET(DT_ALIAS(led0), gpios);
 static enum led_status_pattern current_pattern = LED_STATUS_OFF;
 static struct k_work_delayable blink_work;
 static bool led_is_on;
-
-// Flag to indicate if the LED status module has been initialized. This is used to prevent hardware writes before initialization.
 static bool initialized;
 
 enum led_status_pattern led_status_pattern_for_state(enum bike_state_value state)
@@ -51,6 +49,11 @@ enum led_status_pattern led_status_get_pattern(void)
 	return current_pattern;
 }
 
+bool led_status_is_on(void)
+{
+	return led_is_on;
+}
+
 const char *led_status_pattern_name(enum led_status_pattern pattern)
 {
 	switch (pattern) {
@@ -69,14 +72,6 @@ const char *led_status_pattern_name(enum led_status_pattern pattern)
 	}
 }
 
-/**
- * @brief Set the LED output state.
- *
- * Updates the internal LED state and configures the GPIO pin if available.
- * Only performs hardware write if the module is initialized.
- *
- * @param on LED state: true for ON, false for OFF
- */
 static void write_led(bool on)
 {
 	led_is_on = on;
@@ -102,7 +97,6 @@ static k_timeout_t blink_interval(enum led_status_pattern pattern)
 	}
 }
 
-// Saber se o padrao atual eh de piscar ou nao
 static bool pattern_blinks(enum led_status_pattern pattern)
 {
 	return pattern == LED_STATUS_BLINK_SLOW ||
@@ -110,7 +104,6 @@ static bool pattern_blinks(enum led_status_pattern pattern)
 	       pattern == LED_STATUS_ERROR;
 }
 
-// Handler for the blink work item. Toggles the LED state and reschedules itself if the current pattern requires blinking.
 static void blink_handler(struct k_work *work)
 {
 	ARG_UNUSED(work);
@@ -123,14 +116,14 @@ static void blink_handler(struct k_work *work)
 	(void)k_work_reschedule(&blink_work, blink_interval(current_pattern));
 }
 
-static void apply_pattern(enum led_status_pattern pattern)
+static void apply_pattern(enum led_status_pattern pattern, bool force)
 {
 	if (!initialized) {
 		current_pattern = pattern;
 		return;
 	}
 
-	if (current_pattern == pattern && initialized) {
+	if (current_pattern == pattern && !force) {
 		return;
 	}
 
@@ -179,7 +172,7 @@ int led_status_init(void)
 #endif
 
 	initialized = true;
-	apply_pattern(current_pattern);
+	apply_pattern(current_pattern, true);
 	return 0;
 }
 
@@ -187,9 +180,8 @@ static void bike_state_listener(const struct zbus_channel *chan)
 {
 	const struct bike_state_msg *msg = zbus_chan_const_msg(chan);
 
-	apply_pattern(led_status_pattern_for_state(msg->state));
+	apply_pattern(led_status_pattern_for_state(msg->state), false);
 }
 
-// Cria o listener do led status para o canal de estado da bike
 ZBUS_LISTENER_DEFINE(led_status_state_listener, bike_state_listener);
 ZBUS_CHAN_ADD_OBS(bike_state_chan, led_status_state_listener, 0);
