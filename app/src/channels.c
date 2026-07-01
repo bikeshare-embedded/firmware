@@ -1,4 +1,4 @@
-#include "app_channels.h"
+#include "channels.h"
 
 ZBUS_CHAN_DEFINE(button_event_chan,
 		 struct bike_button_event_msg,

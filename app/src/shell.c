@@ -5,9 +5,9 @@
 #include <zephyr/shell/shell.h>
 #include <zephyr/zbus/zbus.h>
 
-#include "app_channels.h"
-#include "bike_config.h"
-#include "bike_state.h"
+#include "channels.h"
+#include "config.h"
+#include "state.h"
 
 static int refresh_state_after_config(const struct shell *sh)
 {

@@ -5,8 +5,8 @@
 #include <zephyr/logging/log.h>
 #include <zephyr/zbus/zbus.h>
 
-#include "app_channels.h"
-#include "led_status.h"
+#include "channels.h"
+#include "led.h"
 
 #if defined(CONFIG_GPIO) && DT_NODE_HAS_STATUS(DT_ALIAS(led0), okay)
 #include <zephyr/drivers/gpio.h>

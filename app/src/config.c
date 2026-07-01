@@ -4,8 +4,9 @@
 
 #include <zephyr/logging/log.h>
 #include <zephyr/settings/settings.h>
+#include <zephyr/sys/printk.h>
 
-#include "bike_config.h"
+#include "config.h"
 
 LOG_MODULE_REGISTER(bike_config, LOG_LEVEL_INF);
 
@@ -14,12 +15,12 @@ static struct bike_config cfg;
 static int read_string_setting(size_t len, settings_read_cb read_cb,
 			       void *cb_arg, char *buf, size_t buf_len)
 {
-	int rc;
 
 	if (len >= buf_len) {
 		return -EINVAL;
 	}
 
+	int rc;
 	rc = read_cb(cb_arg, buf, len);
 	if (rc < 0) {
 		return rc;

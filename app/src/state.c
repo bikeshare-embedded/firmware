@@ -5,9 +5,9 @@
 #include <zephyr/logging/log.h>
 #include <zephyr/zbus/zbus.h>
 
-#include "app_channels.h"
-#include "bike_config.h"
-#include "bike_state.h"
+#include "channels.h"
+#include "config.h"
+#include "state.h"
 
 LOG_MODULE_REGISTER(bike_state, LOG_LEVEL_INF);
 

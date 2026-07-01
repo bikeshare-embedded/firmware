@@ -4,8 +4,8 @@
 
 #include <zephyr/zbus/zbus.h>
 
-#include "bike_config.h"
-#include "bike_state.h"
+#include "config.h"
+#include "state.h"
 
 #define BIKE_RENTAL_ID_MAX_LEN 32
 

@@ -1,6 +1,6 @@
 #pragma once
 
-#include "bike_state.h"
+#include "state.h"
 
 enum led_status_pattern {
 	LED_STATUS_OFF,

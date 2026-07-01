@@ -1,5 +1,10 @@
-# Bikeshare Firmware
-
+```
+    ██████  ██ ██   ██ ███████ ███████ ██   ██  █████  ██████  ███████
+    ██   ██ ██ ██  ██  ██      ██      ██   ██ ██   ██ ██   ██ ██
+    ██████  ██ █████   █████   ███████ ███████ ███████ ██████  █████
+    ██   ██ ██ ██  ██  ██           ██ ██   ██ ██   ██ ██   ██ ██
+    ██████  ██ ██   ██ ███████ ███████ ██   ██ ██   ██ ██   ██ ███████
+```
 Embedded firmware for a shared bicycle management system built with Zephyr RTOS.
 
 The final coursework target is the Nordic Semiconductor `nRF9160 DK` using the nRF Connect SDK as the practical Zephyr-based baseline for LTE-M/NB-IoT, MQTT, GNSS, modem libraries, and board support. The host target `native_sim` is kept for local development and automated logic tests.
