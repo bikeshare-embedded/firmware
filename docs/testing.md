@@ -38,13 +38,13 @@ The repository now has an initial `tests/` application for config validation, co
 ## Planned ZTEST Suites
 
 | Suite             | Purpose                                                  | Example checks                                                                                                                                                     |
-| ----------------- | -------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ | --- |
+| ----------------- | -------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `bike_state`      | Validate all state-machine transitions.                  | Boot rules, `AVAILABLE -> RESERVED`, `RESERVED -> IN_USE`, `IN_USE -> AVAILABLE`, error handling. Initial coverage exists.                                         |
 | `backend_command` | Validate backend command handling.                       | Accept `RENT_AUTHORIZE` only in `AVAILABLE`, accept matching `RENT_CANCEL` only in `RESERVED`, reject duplicates/mismatches. Initial direct state coverage exists. |
 | `led_status`      | Validate state-to-pattern mapping.                       | `UNREGISTERED=off`, `AVAILABLE=slow blink`, `RESERVED=fast blink`, `IN_USE=solid on`, `ERROR=SOS/error`. Initial coverage exists.                                  |
 | `button_input`    | Validate button event publishing into the state machine. | Published button events move `RESERVED -> IN_USE` and `IN_USE -> AVAILABLE`; duplicate presses inside the debounce window are ignored. Initial coverage exists.    |
 | `bike_config`     | Validate configuration handling.                         | Required fields, non-empty strings, valid `mqtt_port` in `1..65535`, invalid config keeps bike `UNREGISTERED`. Initial coverage exists.                            |
-| `mqtt_client`     | Validate MQTT helper logic.                              | Topic construction, JSON command parsing, command status counters, and compact state/button event payload formatting. Initial coverage exists.                     |     |
+| `mqtt_client`     | Validate MQTT helper logic.                              | Topic construction, JSON command parsing, command status counters, and compact state/button event payload formatting. Initial coverage exists.                     |
 | `telemetry`       | Validate telemetry formatting logic.                     | Includes bike ID, state, `uptime_ms`, rental ID when active, trip duration, LTE status placeholder, GNSS fix/no-fix status.                                        |
 
 ## State-Machine Test Cases
