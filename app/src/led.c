@@ -1,3 +1,9 @@
+/*
+ * Copyright (c) 2026 Bikeshare Contributors
+ *
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
 #include <errno.h>
 
 #include <zephyr/devicetree.h>
@@ -148,7 +154,7 @@ static void apply_pattern(enum led_status_pattern pattern, bool force)
 		break;
 	}
 
-	LOG_INF("Padrao LED: %s", led_status_pattern_name(pattern));
+	LOG_INF("LED pattern: %s", led_status_pattern_name(pattern));
 }
 
 int led_status_init(void)
@@ -157,18 +163,18 @@ int led_status_init(void)
 
 #if LED_STATUS_HAS_GPIO
 	if (!gpio_is_ready_dt(&led)) {
-		LOG_ERR("LED led0 nao esta pronto");
+		LOG_ERR("LED led0 is not ready");
 		return -ENODEV;
 	}
 
 	int rc = gpio_pin_configure_dt(&led, GPIO_OUTPUT_INACTIVE);
 
 	if (rc) {
-		LOG_ERR("Falha ao configurar LED led0: %d", rc);
+		LOG_ERR("Failed to configure LED led0: %d", rc);
 		return rc;
 	}
 #else
-	LOG_WRN("Alias led0 indisponivel; LED mantido em modo logico");
+	LOG_WRN("led0 alias unavailable; LED kept in logical-only mode");
 #endif
 
 	initialized = true;

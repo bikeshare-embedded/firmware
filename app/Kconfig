@@ -1,0 +1,11 @@
+# Copyright (c) 2026 Bikeshare Contributors
+#
+# SPDX-License-Identifier: Apache-2.0
+
+source "Kconfig.zephyr"
+
+config APP_VERSION
+	string "Application version"
+	default "0.0.0"
+	help
+	  Firmware version string reported at boot and used for telemetry.

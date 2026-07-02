@@ -1,3 +1,9 @@
+/*
+ * Copyright (c) 2026 Bikeshare Contributors
+ *
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
 #include <errno.h>
 
 #include <zephyr/devicetree.h>
@@ -37,7 +43,7 @@ int button_input_publish_press(int64_t uptime_ms)
 int button_input_publish_press_debounced(int64_t uptime_ms)
 {
 	if ((uptime_ms - last_published_press_ms) < BUTTON_INPUT_DEBOUNCE_MS) {
-		LOG_WRN("Botao ignorado por debounce");
+		LOG_WRN("Button ignored due to debounce");
 		return -EALREADY;
 	}
 
@@ -63,7 +69,7 @@ static void button_work_handler(struct k_work *work)
 
 	rc = button_input_publish_press_debounced(k_uptime_get());
 	if (rc) {
-		LOG_WRN("Falha ao publicar botao: %d", rc);
+		LOG_WRN("Failed to publish button press: %d", rc);
 	}
 }
 
@@ -87,32 +93,32 @@ int button_input_init(void)
 	int rc;
 
 	if (!gpio_is_ready_dt(&button)) {
-		LOG_ERR("Botao sw0 nao esta pronto");
+		LOG_ERR("Button sw0 is not ready");
 		return -ENODEV;
 	}
 
 	rc = gpio_pin_configure_dt(&button, GPIO_INPUT);
 	if (rc) {
-		LOG_ERR("Falha ao configurar botao sw0: %d", rc);
+		LOG_ERR("Failed to configure button sw0: %d", rc);
 		return rc;
 	}
 
 	gpio_init_callback(&button_cb, button_gpio_callback, BIT(button.pin));
 	rc = gpio_add_callback(button.port, &button_cb);
 	if (rc) {
-		LOG_ERR("Falha ao registrar callback sw0: %d", rc);
+		LOG_ERR("Failed to register callback for sw0: %d", rc);
 		return rc;
 	}
 
 	rc = gpio_pin_interrupt_configure_dt(&button, GPIO_INT_EDGE_TO_ACTIVE);
 	if (rc) {
-		LOG_ERR("Falha ao configurar interrupcao sw0: %d", rc);
+		LOG_ERR("Failed to configure interrupt for sw0: %d", rc);
 		return rc;
 	}
 
-	LOG_INF("Botao sw0 inicializado");
+	LOG_INF("Button sw0 initialized");
 #else
-	LOG_WRN("Alias sw0 indisponivel; botao fisico desabilitado");
+	LOG_WRN("sw0 alias unavailable; physical button disabled");
 #endif
 
 	return 0;

@@ -1,3 +1,9 @@
+/*
+ * Copyright (c) 2026 Bikeshare Contributors
+ *
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
 #include <errno.h>
 #include <stdlib.h>
 #include <string.h>
@@ -20,8 +26,8 @@ static int read_string_setting(size_t len, settings_read_cb read_cb,
 		return -EINVAL;
 	}
 
-	int rc;
-	rc = read_cb(cb_arg, buf, len);
+	int rc = read_cb(cb_arg, buf, len);
+
 	if (rc < 0) {
 		return rc;
 	}
@@ -88,14 +94,14 @@ int bike_config_init(void)
 	int rc = settings_subsys_init();
 
 	if (rc) {
-		LOG_ERR("Falha ao inicializar configuracoes: %d", rc);
+		LOG_ERR("Failed to initialize settings: %d", rc);
 		return rc;
 	}
 
 	rc = settings_load();
 
 	if (rc) {
-		LOG_ERR("Falha ao carregar configuracoes: %d", rc);
+		LOG_ERR("Failed to load settings: %d", rc);
 	}
 
 	return rc;

@@ -1,3 +1,9 @@
+/*
+ * Copyright (c) 2026 Bikeshare Contributors
+ *
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
 #include "sensor.h"
 
 #include <zephyr/devicetree.h>

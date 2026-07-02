@@ -3,11 +3,11 @@
 
 #include <zephyr/ztest.h>
 
-#include "app_channels.h"
-#include "button_input.h"
-#include "bike_config.h"
-#include "bike_state.h"
-#include "led_status.h"
+#include "channels.h"
+#include "button.h"
+#include "config.h"
+#include "state.h"
+#include "led.h"
 
 ZTEST(bike_config, test_config_validation)
 {

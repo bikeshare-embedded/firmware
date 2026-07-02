@@ -1,3 +1,9 @@
+/*
+ * Copyright (c) 2026 Bikeshare Contributors
+ *
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
 #include <errno.h>
 #include <string.h>
 
@@ -54,7 +60,7 @@ static void set_state(enum bike_state_value next_state)
 		return;
 	}
 
-	LOG_INF("Estado: %s -> %s", bike_state_name(current_state),
+	LOG_INF("State: %s -> %s", bike_state_name(current_state),
 		bike_state_name(next_state));
 	current_state = next_state;
 	publish_state();
@@ -93,7 +99,7 @@ static void reservation_timeout_handler(struct k_work *work)
 		return;
 	}
 
-	LOG_WRN("Reserva %s expirada", active_rental_id);
+	LOG_WRN("Reservation %s expired", active_rental_id);
 	clear_rental();
 	set_state(BIKE_STATE_AVAILABLE);
 }
@@ -105,7 +111,7 @@ int bike_state_init(void)
 	current_state = bike_state_is_config_valid() ? BIKE_STATE_AVAILABLE :
 			BIKE_STATE_UNREGISTERED;
 	publish_state();
-	LOG_INF("Estado inicial: %s", bike_state_name(current_state));
+	LOG_INF("Initial state: %s", bike_state_name(current_state));
 	return 0;
 }
 
@@ -124,18 +130,18 @@ int bike_state_authorize(const char *rental_id)
 	size_t len;
 
 	if (!rental_id || !rental_id[0]) {
-		LOG_WRN("RENT_AUTHORIZE rejeitado: rental_id ausente");
+		LOG_WRN("RENT_AUTHORIZE rejected: rental_id missing");
 		return -EINVAL;
 	}
 
 	len = strlen(rental_id);
 	if (len >= sizeof(active_rental_id)) {
-		LOG_WRN("RENT_AUTHORIZE rejeitado: rental_id longo demais");
+		LOG_WRN("RENT_AUTHORIZE rejected: rental_id too long");
 		return -EINVAL;
 	}
 
 	if (current_state != BIKE_STATE_AVAILABLE) {
-		LOG_WRN("RENT_AUTHORIZE rejeitado no estado %s",
+		LOG_WRN("RENT_AUTHORIZE rejected in state %s",
 			bike_state_name(current_state));
 		return -EACCES;
 	}
@@ -151,14 +157,14 @@ int bike_state_authorize(const char *rental_id)
 int bike_state_cancel(const char *rental_id)
 {
 	if (current_state != BIKE_STATE_RESERVED) {
-		LOG_WRN("RENT_CANCEL rejeitado no estado %s",
+		LOG_WRN("RENT_CANCEL rejected in state %s",
 			bike_state_name(current_state));
 		return -EACCES;
 	}
 
 	if (rental_id && rental_id[0] &&
 	    strcmp(rental_id, active_rental_id) != 0) {
-		LOG_WRN("RENT_CANCEL rejeitado: rental_id divergente");
+		LOG_WRN("RENT_CANCEL rejected: rental_id mismatch");
 		return -EINVAL;
 	}
 
@@ -176,13 +182,13 @@ int bike_state_button_press(void)
 		set_state(BIKE_STATE_IN_USE);
 		return 0;
 	case BIKE_STATE_IN_USE:
-		LOG_INF("Viagem finalizada apos %lld ms",
+		LOG_INF("Trip finished after %lld ms",
 			k_uptime_get() - trip_started_at_ms);
 		clear_rental();
 		set_state(BIKE_STATE_AVAILABLE);
 		return 0;
 	default:
-		LOG_WRN("Botao ignorado no estado %s",
+		LOG_WRN("Button ignored in state %s",
 			bike_state_name(current_state));
 		return -EACCES;
 	}
@@ -200,7 +206,7 @@ static void backend_command_listener(const struct zbus_channel *chan)
 		(void)bike_state_cancel(msg->rental_id);
 		break;
 	default:
-		LOG_WRN("Comando backend desconhecido: %d", msg->type);
+		LOG_WRN("Unknown backend command: %d", msg->type);
 		break;
 	}
 }

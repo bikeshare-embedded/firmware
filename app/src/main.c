@@ -1,40 +1,32 @@
 /*
+ * Copyright (c) 2026 Bikeshare Contributors
  *
- *	⠀⠀⠀⠀⠀⠀⠀⠀⠀⠛⠻⠗⢶⣶⣶⣦⣀⡀⠀⠀⠀⠀⠀⠀⠀⠀
- *	⠀⠀⠀⠀⣀⡀⣤⡄⠀⠀⠀⠀⢸⠟⡄⠀⠘⠉⠛⠀⠀⠀⠀⠀⠀⠀
- *	⠀⠀⠀⠀⠉⢻⠇⠀⠀⠀⡀⢴⠝⣄⣷⣀⠀⠀⠀⠀⠀⠀⠀bikeshare.
- *	⠀⠀⠀⠀⠀⠈⣦⠀⡠⡪⢲⠃⡜⢉⣧⣿⣧⣤⣤⣤⣄⡀⠀⠀⠀⠀
- *	⠀⢀⣠⣴⣤⣴⣿⡕⠈⡠⣡⠌⠀⣼⢿⠿⢿⡏⠉⠛⠻⣿⣷⣤⠀⠀
- *	⢠⡾⠁⡴⠋⢿⣷⠃⡔⣱⠃⢀⣾⡟⢻⡆⠘⣷⠀⠀⠀⠀⠻⣿⣷⡀
- *	⣸⢁⣾⣅⣀⡜⢻⡜⡠⠁⠀⣼⣿⠀⠘⣿⣴⣻⡶⡄⠀⠀⠀⢹⣿⣧
- *	⢻⡘⢻⠀⠈⣿⣿⠗⠉⠀⠀⢿⣇⠀⠀⠈⣿⠛⢃⡇⠀⠀⠀⢸⣿⣿
- *	⠈⢷⣧⣨⣾⣯⡿⠀⠀⠀⠀⠸⣿⡄⠀⠀⠈⠉⠉⠀⠀⠀⢀⣿⣿⡏
- *	⠀⠀⠈⠉⠀⠀⠀⠀⠀⠀⠀⠀⠹⣿⣦⣀⠀⠀⠀⠀⢀⣠⣿⣿⠟⠀
- *	⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠈⠙⠿⣿⣶⣶⣿⣿⠿⠛⠁⠀⠀
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+/**
+ * @file
+ * @brief Application entry point.
  *
- * =================================================
- *
- * @file main.c
- *
- * @brief The Main Function
  * @authors ruantmelo@gmail.com & vcn0510@gmail.com
- *
- * =================================================
  */
 
 #include <zephyr/kernel.h>
 #include <zephyr/logging/log.h>
 
+#include "button.h"
 #include "config.h"
-#include "state.h"
 #include "led.h"
+#include "sensor.h"
+#include "state.h"
 
 LOG_MODULE_REGISTER(bikeshare, LOG_LEVEL_INF);
 
 int main(void)
 {
-	LOG_INF("Bikeshare Firmware iniciando...");
+	LOG_INF("Bikeshare. Version: %s", CONFIG_APP_VERSION);
 
+	/* Initialize modules */
 	bike_config_init();
 	led_status_init();
 	button_input_init();

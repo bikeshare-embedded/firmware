@@ -9,6 +9,7 @@ project(bikeshare_firmware)
 
 target_sources(app PRIVATE
 	src/main.c
+	src/button.c
 	src/channels.c
 	src/config.c
 	src/shell.c
