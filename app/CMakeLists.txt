@@ -15,6 +15,7 @@ target_sources(app PRIVATE
 	src/shell.c
 	src/state.c
 	src/led.c
+	src/lte.c
 	src/sensor.c
 )
 

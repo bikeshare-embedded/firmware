@@ -22,7 +22,8 @@ Modules:
 | `bike_state` | Owns the authoritative state machine and rental context. |
 | `button_input` | Reads the physical button through `sw0` and publishes button events. |
 | `led_status` | Observes bike state and drives the LED pattern through `led0`. |
-| `mqtt_client` | Manages LTE/MQTT connectivity, subscribes to backend commands, and publishes telemetry/events. |
+| `lte` | Initializes the nRF9160 modem, attaches to LTE, and exposes attach diagnostics. |
+| `mqtt_client` | Manages MQTT connectivity, subscribes to backend commands, and publishes telemetry/events. |
 | `telemetry` | Produces periodic telemetry samples, including state, uptime, LTE status, trip data, and best-effort GNSS. |
 
 ## Data Flow
@@ -176,7 +177,8 @@ GNSS must not block trips, state transitions, MQTT connection, or the class demo
 - `bike_shell` can publish simulated backend commands and button events for native-simulation demos.
 - `led_status` observes `bike_state` and runs blink timing through Zephyr timers/work.
 - `telemetry` runs periodically through a work item or thread.
-- `mqtt_client` owns the LTE/MQTT connection loop, command subscription, publish retries, and reconnect behavior.
+- `lte` owns modem initialization, APN/PDN configuration, LTE attach, disconnect, and shell diagnostics.
+- `mqtt_client` owns MQTT connection, command subscription, publish retries, and reconnect behavior after LTE is available.
 - LTE/MQTT disconnects do not move an active trip to `ERROR`; local state continues and the MQTT client retries in the background.
 
 ## Configuration Layout
@@ -185,8 +187,8 @@ Recommended project configuration layout:
 
 - Common Zephyr subsystem options live in `app/prj.conf`.
 - `native_sim` TAP networking and static IP settings live in `app/boards/native_sim.conf` and `app/boards/native_sim_native_64.conf`.
-- nRF9160 DK hardware persistence, GPIO, UART shell, and generic MQTT/network library scaffolding live in `app/boards/nrf9160dk_nrf9160_ns.conf`.
+- nRF9160 DK hardware persistence, GPIO, UART shell, LTE modem options, and generic MQTT/network library scaffolding live in `app/boards/nrf9160dk_nrf9160_ns.conf`.
 - The nRF9160 settings partition is selected in `app/boards/nrf9160dk_nrf9160_ns.overlay`.
-- NCS-specific LTE modem and GNSS options should be added to the nRF9160 board configuration when the manifest moves from upstream Zephyr to NCS.
+- GNSS options should be added to the nRF9160 board configuration when best-effort GNSS telemetry is implemented.
 
 This avoids mixing hardware modem options with host-simulation options.

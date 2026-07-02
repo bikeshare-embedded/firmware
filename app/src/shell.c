@@ -13,6 +13,7 @@
 
 #include "channels.h"
 #include "config.h"
+#include "lte.h"
 #include "state.h"
 
 static int refresh_state_after_config(const struct shell *sh)
@@ -148,6 +149,60 @@ static int cmd_bike_state(const struct shell *sh, size_t argc, char **argv)
 	return 0;
 }
 
+static int cmd_bike_lte_status(const struct shell *sh, size_t argc, char **argv)
+{
+	struct bike_lte_status status;
+
+	ARG_UNUSED(argc);
+	ARG_UNUSED(argv);
+
+	bike_lte_status_get(&status);
+	shell_print(sh, "LTE supported:    %s", status.supported ? "yes" : "no");
+	shell_print(sh, "Initialized:      %s", status.initialized ? "yes" : "no");
+	shell_print(sh, "Connecting:       %s", status.connecting ? "yes" : "no");
+	shell_print(sh, "Connected:        %s", status.connected ? "yes" : "no");
+	shell_print(sh, "Registration:     %s",
+		    bike_lte_registration_name(status.registration));
+	shell_print(sh, "Mode:             %s", bike_lte_mode_name(status.mode));
+	shell_print(sh, "APN:              %s", show_string(status.apn));
+	shell_print(sh, "Last error:       %d", status.last_error);
+	shell_print(sh, "Cell ID:          %u", status.cell_id);
+	shell_print(sh, "Tracking area:    %u", status.tac);
+	return 0;
+}
+
+static int cmd_bike_lte_connect(const struct shell *sh, size_t argc, char **argv)
+{
+	ARG_UNUSED(argc);
+	ARG_UNUSED(argv);
+
+	int rc = bike_lte_connect();
+
+	if (rc) {
+		shell_error(sh, "Failed to start LTE attach: %d", rc);
+		return rc;
+	}
+
+	shell_print(sh, "LTE attach started.");
+	return 0;
+}
+
+static int cmd_bike_lte_disconnect(const struct shell *sh, size_t argc, char **argv)
+{
+	ARG_UNUSED(argc);
+	ARG_UNUSED(argv);
+
+	int rc = bike_lte_disconnect();
+
+	if (rc) {
+		shell_error(sh, "Failed to disconnect LTE: %d", rc);
+		return rc;
+	}
+
+	shell_print(sh, "LTE disconnected.");
+	return 0;
+}
+
 static int cmd_bike_sim_authorize(const struct shell *sh, size_t argc, char **argv)
 {
 	ARG_UNUSED(argc);
@@ -236,10 +291,19 @@ SHELL_STATIC_SUBCMD_SET_CREATE(sub_bike_sim,
 	SHELL_SUBCMD_SET_END
 );
 
+SHELL_STATIC_SUBCMD_SET_CREATE(sub_bike_lte,
+	SHELL_CMD(status, NULL, "Show LTE modem status", cmd_bike_lte_status),
+	SHELL_CMD(connect, NULL, "Start LTE attach", cmd_bike_lte_connect),
+	SHELL_CMD(disconnect, NULL, "Set LTE modem offline",
+		  cmd_bike_lte_disconnect),
+	SHELL_SUBCMD_SET_END
+);
+
 SHELL_STATIC_SUBCMD_SET_CREATE(sub_bike,
 	SHELL_CMD(set, &sub_bike_set, "Configure bike parameters", NULL),
 	SHELL_CMD(get, NULL, "Show current configuration", cmd_bike_get),
 	SHELL_CMD(state, NULL, "Show current state", cmd_bike_state),
+	SHELL_CMD(lte, &sub_bike_lte, "LTE modem diagnostics", NULL),
 	SHELL_CMD(sim, &sub_bike_sim, "Simulate backend and button events", NULL),
 	SHELL_SUBCMD_SET_END
 );

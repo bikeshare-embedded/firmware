@@ -22,7 +22,7 @@ The firmware MVP is a Zephyr/NCS application that runs on one bicycle controller
 - Debug UART for logs and shell access.
 - One onboard LED for state indication.
 - One onboard button for trip start/end actions.
-- LTE/4G connectivity through the nRF9160 modem.
+- LTE/4G attach and diagnostics through the nRF9160 modem.
 - MQTT communication with a Mosquitto broker reachable from the LTE network.
 - Shell commands for setup, diagnostics, and local backend-command simulation.
 - Persistent configuration through Zephyr Settings with an NVS backend on hardware.
@@ -56,17 +56,18 @@ Implemented now:
 - Zephyr Settings using `CONFIG_SETTINGS_RUNTIME` for development-time storage.
 - Board-specific app configuration: `native_sim` and `native_sim/native/64` own TAP/static-IP networking, while `nrf9160dk_nrf9160_ns` owns GPIO/UART/NVS persistence scaffolding.
 - Initial ZTEST/Twister application for config validation, core state transitions, LED state-to-pattern mapping, LED cached-init behavior, button event publishing, and button debounce filtering.
-- Upstream Zephyr manifest pinned to `v4.4.0`.
+- NCS manifest pinned to `v2.7.0` for nRF9160 modem support.
+- Initial LTE modem module with attach/disconnect/status shell diagnostics on nRF9160.
 
 Main implementation gaps before the agreed MVP:
 
-- Migrate the final hardware target to nRF Connect SDK for nRF9160 LTE/GNSS support.
+- Validate LTE attach on nRF9160 DK hardware with a real SIM/APN.
 - Validate NVS-backed Settings on hardware.
 - Validate LED GPIO behavior on nRF9160 DK hardware.
 - Validate physical button behavior on nRF9160 DK hardware.
 - Complete the `ERROR` fault path in the state machine.
 - Complete zbus users for telemetry and MQTT.
-- Add MQTT over LTE.
+- Add MQTT over the established LTE connection.
 - Add best-effort GNSS telemetry.
 - Expand ZTEST/Twister suites for telemetry, timeout timing, and edge cases.
 
@@ -79,11 +80,12 @@ Main implementation gaps before the agreed MVP:
 
 ## Setup Baseline
 
-Use the nRF Connect SDK for the final LTE/GNSS firmware target. The current `west.yml` still pins upstream Zephyr `v4.4.0`; it is useful for the current `native_sim` skeleton but must be revised or replaced before the LTE/GNSS MVP is implemented.
+Use the nRF Connect SDK for the final LTE/GNSS firmware target. The app manifest now imports `sdk-nrf` `v2.7.0`, matching the local NCS workspace used for nRF9160 LTE modem libraries.
 
 Typical final hardware build command:
 
 ```bash
+source ../ncs-env.sh
 west build -b nrf9160dk/nrf9160/ns bikeshare-firmware/app -d build/nrf9160dk -p always
 ```
 
@@ -137,6 +139,9 @@ bike set mqtt_port <port>
 bike set apn <apn>
 bike get
 bike state
+bike lte status
+bike lte connect
+bike lte disconnect
 ```
 
 For local demos, shell can inject simulated backend commands:
@@ -168,6 +173,7 @@ bikes/{bike_id}/commands
 - Required settings are configured with `bike set ...` commands.
 - Settings persist after reboot through NVS on hardware.
 - LTE attaches to the cellular network.
+- `bike lte status` reports registration state and diagnostic errors.
 - MQTT connects to the Mosquitto broker.
 - Bike enters `AVAILABLE` after valid configuration and initialization.
 - Backend command `RENT_AUTHORIZE` or `bike sim authorize <rental_id>` moves the bike to `RESERVED`.
