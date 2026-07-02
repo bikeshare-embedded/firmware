@@ -72,9 +72,9 @@ ZTEST(led_status, test_state_to_pattern_mapping)
 	zassert_equal(led_status_pattern_for_state(BIKE_STATE_AVAILABLE),
 		      LED_STATUS_BLINK_SLOW);
 	zassert_equal(led_status_pattern_for_state(BIKE_STATE_RESERVED),
-		      LED_STATUS_BLINK_FAST);
+		      LED_STATUS_CHASE);
 	zassert_equal(led_status_pattern_for_state(BIKE_STATE_IN_USE),
-		      LED_STATUS_SOLID_ON);
+		      LED_STATUS_CHASE);
 	zassert_equal(led_status_pattern_for_state(BIKE_STATE_ERROR),
 		      LED_STATUS_ERROR);
 }

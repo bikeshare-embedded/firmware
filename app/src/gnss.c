@@ -120,6 +120,7 @@ static void store_valid_fix(const struct nrf_modem_gnss_pvt_data_frame *pvt)
 	LOG_INF("GNSS fix updated: lat=%d lon=%d speed=%d.%02d m/s",
 		fix.latitude_microdegrees, fix.longitude_microdegrees, speed_cm_s / 100,
 		speed_cm_s % 100);
+	LOG_INF("GNSS satellites used: %u, accuracy: %u mm", fix.satellites_used, fix.accuracy_mm);
 }
 
 static void read_and_store_pvt(bool require_fix)

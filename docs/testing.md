@@ -41,7 +41,7 @@ The repository has a `tests/` application for config validation, core state tran
 | --- | --- | --- |
 | `bike_state` | Validate all state-machine transitions. | Boot rules, `AVAILABLE -> RESERVED`, `RESERVED -> IN_USE`, `IN_USE -> AVAILABLE`, error handling. Initial coverage exists. |
 | `backend_command` | Validate backend command handling. | Accept `RENT_AUTHORIZE` only in `AVAILABLE`, accept matching `RENT_CANCEL` only in `RESERVED`, reject duplicates/mismatches. Initial direct state coverage exists. |
-| `led_status` | Validate state-to-pattern mapping. | `UNREGISTERED=off`, `AVAILABLE=slow blink`, `RESERVED=fast blink`, `IN_USE=solid on`, `ERROR=SOS/error`. Initial coverage exists. |
+| `led_status` | Validate state-to-pattern mapping. | `UNREGISTERED=off`, `AVAILABLE=slow blink`, `RESERVED/IN_USE=led0 -> led1 -> led3 -> led2 chase`, `ERROR=SOS/error`. Initial coverage exists. |
 | `button_input` | Validate button event publishing into the state machine. | Published button events move `RESERVED -> IN_USE` and `IN_USE -> AVAILABLE`; duplicate presses inside the debounce window are ignored. Initial coverage exists. |
 | `bike_config` | Validate configuration handling. | Required fields, non-empty strings, valid `mqtt_port` in `1..65535`, invalid config keeps bike `UNREGISTERED`. Initial coverage exists. |
 | `telemetry` | Validate telemetry formatting logic. | Includes bike ID, state, `uptime_ms`, GNSS fix/no-fix status, and clears coordinate fields when no fix is available. Initial coverage exists. |
@@ -139,8 +139,8 @@ mosquitto_sub -h <broker-host> -t 'bikes/BIKE_001/#' -v
 bike sim authorize RENTAL_001
 ```
 
-- Confirm state changes to `RESERVED` and LED fast-blinks.
-- Press the board button and confirm state changes to `IN_USE` and LED becomes solid on.
+- Confirm state changes to `RESERVED` and LEDs chase through `led0 -> led1 -> led3 -> led2`.
+- Press the board button and confirm state changes to `IN_USE` and LEDs keep chasing through `led0 -> led1 -> led3 -> led2`.
 - Press the board button again and confirm state returns to `AVAILABLE` and LED slow-blinks.
 - Confirm MQTT event messages are published for reservation, trip start, and trip end.
 - Confirm telemetry messages are published periodically.

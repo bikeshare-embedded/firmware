@@ -127,8 +127,8 @@ The MVP uses one onboard LED through the `led0` devicetree alias.
 | --- | --- |
 | `UNREGISTERED` | Off |
 | `AVAILABLE` | Slow blink |
-| `RESERVED` | Fast blink |
-| `IN_USE` | Solid on |
+| `RESERVED` | Chase animation across `led0 -> led1 -> led3 -> led2` |
+| `IN_USE` | Chase animation across `led0 -> led1 -> led3 -> led2` |
 | `ERROR` | SOS/error pattern |
 
 The LED module observes the `bike_state` channel. It must not own or modify state.
