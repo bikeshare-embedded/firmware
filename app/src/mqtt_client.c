@@ -11,6 +11,7 @@
 #include <zephyr/data/json.h>
 #include <zephyr/kernel.h>
 #include <zephyr/logging/log.h>
+#include <zephyr/sys/atomic.h>
 #include <zephyr/sys/util.h>
 #include <zephyr/zbus/zbus.h>
 
@@ -270,11 +271,11 @@ static struct mqtt_client client_ctx;
 static struct sockaddr_storage broker_addr;
 static struct zsock_pollfd fds[1];
 K_SEM_DEFINE(connect_sem, 0, 1);
-static bool thread_running;
-static bool stop_requested;
-static bool session_ended;
+static atomic_t thread_running;
+static atomic_t stop_requested;
+static atomic_t session_ended;
 static int session_end_reason;
-static bool mqtt_enabled;
+static atomic_t mqtt_enabled;
 static char client_id[BIKE_ID_MAX_LEN];
 static struct mqtt_utf8 username;
 static struct mqtt_utf8 password;
@@ -289,6 +290,28 @@ static void status_count_publish_error(int error)
 	current_status.publish_error_count++;
 	current_status.last_error = error;
 	k_mutex_unlock(&status_lock);
+}
+
+static bool status_publish_ready(void)
+{
+	bool ready;
+
+	k_mutex_lock(&status_lock, K_FOREVER);
+	ready = current_status.connected && current_status.subscribed;
+	k_mutex_unlock(&status_lock);
+
+	return ready;
+}
+
+static bool status_session_active(void)
+{
+	bool active;
+
+	k_mutex_lock(&status_lock, K_FOREVER);
+	active = current_status.connected || current_status.connecting;
+	k_mutex_unlock(&status_lock);
+
+	return active;
 }
 
 static int build_button_topic(const char *bike_id, char *topic, size_t topic_len)
@@ -389,7 +412,7 @@ static void mark_session_ended(int reason)
 	 * The worker decides whether to retry based on mqtt_enabled.
 	 */
 	session_end_reason = reason;
-	session_ended = true;
+	atomic_set(&session_ended, true);
 }
 
 static int publish_payload(const char *topic, const char *payload)
@@ -398,11 +421,11 @@ static int publish_payload(const char *topic, const char *payload)
 	int rc;
 
 	/* zbus observers may fire before the operator requests MQTT. */
-	if (!mqtt_enabled) {
+	if (!atomic_get(&mqtt_enabled)) {
 		return 0;
 	}
 
-	if (!current_status.connected || !current_status.subscribed) {
+	if (!status_publish_ready()) {
 		status_count_publish_error(-ENOTCONN);
 		return -ENOTCONN;
 	}
@@ -684,7 +707,7 @@ static int start_session(void)
 	client_init(secure, host);
 
 	/* Reset per-session state before MQTT events can arrive. */
-	session_ended = false;
+	atomic_clear(&session_ended);
 	session_end_reason = 0;
 
 	k_mutex_lock(&status_lock, K_FOREVER);
@@ -722,7 +745,8 @@ static int start_session(void)
 
 static int poll_session(void)
 {
-	while (mqtt_enabled && !stop_requested && !session_ended) {
+	while (atomic_get(&mqtt_enabled) && !atomic_get(&stop_requested) &&
+	       !atomic_get(&session_ended)) {
 		int timeout = mqtt_keepalive_time_left(&client_ctx);
 		int rc;
 
@@ -745,7 +769,7 @@ static int poll_session(void)
 				status_set_error(rc);
 				return rc;
 			}
-			if (session_ended) {
+			if (atomic_get(&session_ended)) {
 				return session_end_reason;
 			}
 		}
@@ -758,7 +782,7 @@ static int poll_session(void)
 				status_set_error(rc);
 				return rc;
 			}
-			if (session_ended) {
+			if (atomic_get(&session_ended)) {
 				return session_end_reason;
 			}
 		} else if (rc != -EAGAIN) {
@@ -768,14 +792,15 @@ static int poll_session(void)
 		}
 	}
 
-	return session_ended ? session_end_reason : 0;
+	return atomic_get(&session_ended) ? session_end_reason : 0;
 }
 
 static void wait_before_retry(int32_t backoff_ms)
 {
 	int64_t deadline = k_uptime_get() + backoff_ms;
 
-	while (mqtt_enabled && !stop_requested && k_uptime_get() < deadline) {
+	while (atomic_get(&mqtt_enabled) && !atomic_get(&stop_requested) &&
+	       k_uptime_get() < deadline) {
 		k_sleep(K_MSEC(MIN(1000, deadline - k_uptime_get())));
 	}
 }
@@ -791,7 +816,7 @@ static void mqtt_worker(void *arg1, void *arg2, void *arg3)
 
 		k_sem_take(&connect_sem, K_FOREVER);
 
-		while (mqtt_enabled && !stop_requested) {
+		while (atomic_get(&mqtt_enabled) && !atomic_get(&stop_requested)) {
 			bool session_opened = false;
 			int rc;
 
@@ -813,7 +838,8 @@ static void mqtt_worker(void *arg1, void *arg2, void *arg3)
 			}
 			clear_session_status(rc);
 
-			if (!mqtt_enabled || stop_requested) {
+			if (!atomic_get(&mqtt_enabled) ||
+			    atomic_get(&stop_requested)) {
 				break;
 			}
 
@@ -826,8 +852,13 @@ static void mqtt_worker(void *arg1, void *arg2, void *arg3)
 					 CONFIG_BIKE_MQTT_RECONNECT_MAX_MS);
 		}
 
-		thread_running = false;
-		stop_requested = false;
+		if (atomic_get(&mqtt_enabled) &&
+		    !atomic_get(&stop_requested)) {
+			continue;
+		}
+
+		atomic_clear(&thread_running);
+		atomic_clear(&stop_requested);
 		clear_session_status(0);
 	}
 }
@@ -837,11 +868,12 @@ K_THREAD_DEFINE(mqtt_thread, CONFIG_BIKE_MQTT_THREAD_STACK_SIZE, mqtt_worker,
 
 int bike_mqtt_init(void)
 {
+	k_mutex_lock(&status_lock, K_FOREVER);
 	if (current_status.initialized) {
+		k_mutex_unlock(&status_lock);
 		return 0;
 	}
 
-	k_mutex_lock(&status_lock, K_FOREVER);
 	current_status.initialized = true;
 	current_status.last_error = 0;
 	k_mutex_unlock(&status_lock);
@@ -853,11 +885,9 @@ int bike_mqtt_connect(void)
 {
 	int rc;
 
-	if (!current_status.initialized) {
-		rc = bike_mqtt_init();
-		if (rc) {
-			return rc;
-		}
+	rc = bike_mqtt_init();
+	if (rc) {
+		return rc;
 	}
 
 	if (!bike_config_is_valid(bike_config_get())) {
@@ -865,18 +895,18 @@ int bike_mqtt_connect(void)
 		return -EINVAL;
 	}
 
-	mqtt_enabled = true;
+	atomic_set(&mqtt_enabled, true);
+	atomic_clear(&stop_requested);
 	k_mutex_lock(&status_lock, K_FOREVER);
 	current_status.enabled = true;
 	k_mutex_unlock(&status_lock);
 
-	if (thread_running) {
+	if (atomic_get(&thread_running)) {
 		k_sem_give(&connect_sem);
 		return 0;
 	}
 
-	thread_running = true;
-	stop_requested = false;
+	atomic_set(&thread_running, true);
 	k_sem_give(&connect_sem);
 	LOG_INF("MQTT connect requested");
 	return 0;
@@ -934,17 +964,17 @@ int bike_mqtt_disconnect(void)
 {
 	int rc = 0;
 
-	if (!thread_running) {
-		mqtt_enabled = false;
+	if (!atomic_get(&thread_running)) {
+		atomic_clear(&mqtt_enabled);
 		k_mutex_lock(&status_lock, K_FOREVER);
 		current_status.enabled = false;
 		k_mutex_unlock(&status_lock);
 		return 0;
 	}
 
-	mqtt_enabled = false;
-	stop_requested = true;
-	if (current_status.connected || current_status.connecting) {
+	atomic_clear(&mqtt_enabled);
+	atomic_set(&stop_requested, true);
+	if (status_session_active()) {
 		rc = mqtt_disconnect(&client_ctx);
 		if (rc) {
 			(void)mqtt_abort(&client_ctx);
