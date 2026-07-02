@@ -38,6 +38,7 @@ struct bike_lte_status {
 	bool initialized;
 	bool connecting;
 	bool connected;
+	bool pdn_active;
 	enum bike_lte_registration registration;
 	enum bike_lte_mode mode;
 	char apn[BIKE_APN_MAX_LEN];

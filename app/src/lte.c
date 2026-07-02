@@ -76,6 +76,8 @@ void bike_lte_status_get(struct bike_lte_status *status)
 #include <modem/nrf_modem_lib.h>
 #include <modem/pdn.h>
 
+static bool default_pdn_active;
+
 static enum bike_lte_registration map_registration(enum lte_lc_nw_reg_status status)
 {
 	switch (status) {
@@ -117,14 +119,54 @@ static bool is_registered(enum bike_lte_registration registration)
 	       registration == BIKE_LTE_REG_REGISTERED_ROAMING;
 }
 
+static void update_connection_state(void)
+{
+	current_status.pdn_active = default_pdn_active;
+	current_status.connected = is_registered(current_status.registration) &&
+				   default_pdn_active;
+	current_status.connecting = !current_status.connected &&
+				    (current_status.registration == BIKE_LTE_REG_SEARCHING ||
+				     is_registered(current_status.registration));
+}
+
+static void pdn_event_handler(uint8_t cid, enum pdn_event event, int reason)
+{
+	ARG_UNUSED(cid);
+
+	switch (event) {
+	case PDN_EVENT_ACTIVATED:
+		default_pdn_active = true;
+		current_status.last_error = 0;
+		LOG_INF("Default PDN activated");
+		break;
+	case PDN_EVENT_DEACTIVATED:
+	case PDN_EVENT_NETWORK_DETACH:
+		default_pdn_active = false;
+		LOG_WRN("Default PDN deactivated");
+		break;
+	case PDN_EVENT_CNEC_ESM:
+		default_pdn_active = false;
+		current_status.last_error = -ENETUNREACH;
+#if defined(CONFIG_PDN_ESM_STRERROR)
+		LOG_ERR("Default PDN ESM error: %d (%s)", reason,
+			pdn_esm_strerror(reason));
+#else
+		LOG_ERR("Default PDN ESM error: %d", reason);
+#endif
+		break;
+	default:
+		break;
+	}
+
+	update_connection_state();
+}
+
 static void lte_event_handler(const struct lte_lc_evt *const evt)
 {
 	switch (evt->type) {
 	case LTE_LC_EVT_NW_REG_STATUS:
 		current_status.registration = map_registration(evt->nw_reg_status);
-		current_status.connected = is_registered(current_status.registration);
-		current_status.connecting = !current_status.connected &&
-					    current_status.registration == BIKE_LTE_REG_SEARCHING;
+		update_connection_state();
 		LOG_INF("LTE registration: %s",
 			bike_lte_registration_name(current_status.registration));
 		break;
@@ -159,6 +201,13 @@ int bike_lte_init(void)
 	}
 
 	lte_lc_register_handler(lte_event_handler);
+	rc = pdn_default_ctx_cb_reg(pdn_event_handler);
+	if (rc) {
+		current_status.last_error = rc;
+		LOG_ERR("Failed to register default PDN callback: %d", rc);
+		return rc;
+	}
+
 	current_status.initialized = true;
 	current_status.last_error = 0;
 	LOG_INF("LTE modem initialized");
@@ -183,7 +232,7 @@ int bike_lte_connect(void)
 	}
 
 	if (apn[0]) {
-		rc = pdn_ctx_configure(0, apn, PDN_FAM_IPV4V6, NULL);
+		rc = pdn_ctx_configure(0, apn, PDN_FAM_IPV4, NULL);
 		if (rc) {
 			current_status.last_error = rc;
 			LOG_ERR("Failed to configure APN '%s': %d", apn, rc);
@@ -192,6 +241,7 @@ int bike_lte_connect(void)
 
 		strncpy(current_status.apn, apn, sizeof(current_status.apn) - 1);
 		current_status.apn[sizeof(current_status.apn) - 1] = '\0';
+		LOG_INF("Default PDN APN configured for IPv4: %s", apn);
 	}
 
 	rc = lte_lc_connect_async(NULL);
@@ -230,6 +280,8 @@ int bike_lte_disconnect(void)
 
 	current_status.connecting = false;
 	current_status.connected = false;
+	default_pdn_active = false;
+	current_status.pdn_active = false;
 	current_status.registration = BIKE_LTE_REG_NOT_REGISTERED;
 	current_status.last_error = 0;
 	LOG_INF("LTE disconnected");

@@ -8,11 +8,15 @@
 #include <stdio.h>
 #include <string.h>
 
+#include <zephyr/data/json.h>
 #include <zephyr/kernel.h>
 #include <zephyr/logging/log.h>
 #include <zephyr/sys/util.h>
+#include <zephyr/zbus/zbus.h>
 
+#include "channels.h"
 #include "config.h"
+#include "lte.h"
 #include "mqtt_client.h"
 
 LOG_MODULE_REGISTER(bike_mqtt, LOG_LEVEL_INF);
@@ -26,6 +30,15 @@ static struct bike_mqtt_status current_status = {
 };
 
 K_MUTEX_DEFINE(status_lock);
+
+enum mqtt_status_error {
+	MQTT_STATUS_ERR_DNS = -1000,
+	MQTT_STATUS_ERR_CONNACK = -1001,
+	MQTT_STATUS_ERR_SUBACK = -1002,
+	MQTT_STATUS_ERR_PARSE = -1003,
+	MQTT_STATUS_ERR_PUBLISH = -1004,
+	MQTT_STATUS_ERR_CONNECT = -1005,
+};
 
 static void status_copy(struct bike_mqtt_status *status)
 {
@@ -43,11 +56,205 @@ void bike_mqtt_status_get(struct bike_mqtt_status *status)
 	status_copy(status);
 }
 
+const char *bike_mqtt_error_name(int error)
+{
+	switch (error) {
+	case 0:
+		return "none";
+	case MQTT_STATUS_ERR_DNS:
+		return "dns_failure";
+	case MQTT_STATUS_ERR_CONNECT:
+		return "connect_failure";
+	case MQTT_STATUS_ERR_CONNACK:
+		return "connack_refused";
+	case MQTT_STATUS_ERR_SUBACK:
+		return "suback_failure";
+	case MQTT_STATUS_ERR_PARSE:
+		return "parse_failure";
+	case MQTT_STATUS_ERR_PUBLISH:
+		return "publish_failure";
+	case -EINVAL:
+		return "invalid_argument";
+	case -ENOTCONN:
+		return "not_connected";
+	case -ENOTSUP:
+		return "not_supported";
+	case -EIO:
+		return "io_failure";
+	case -ECONNREFUSED:
+		return "connection_refused";
+	case -ECONNRESET:
+		return "connection_reset";
+	case -ETIMEDOUT:
+		return "timed_out";
+	case -EHOSTUNREACH:
+		return "host_unreachable";
+	case -ENETUNREACH:
+		return "network_unreachable";
+	default:
+		return "errno";
+	}
+}
+
 static void status_set_error(int error)
 {
 	k_mutex_lock(&status_lock, K_FOREVER);
 	current_status.last_error = error;
 	k_mutex_unlock(&status_lock);
+}
+
+static void status_count_parse_error(int error)
+{
+	k_mutex_lock(&status_lock, K_FOREVER);
+	current_status.parse_error_count++;
+	current_status.last_error = error;
+	k_mutex_unlock(&status_lock);
+}
+
+int bike_mqtt_build_command_topic(const char *bike_id, char *topic,
+				  size_t topic_len)
+{
+	int len;
+
+	if (!bike_id || !bike_id[0] || !topic || topic_len == 0) {
+		return -EINVAL;
+	}
+
+	len = snprintk(topic, topic_len, "bikes/%s/commands", bike_id);
+	if (len < 0 || len >= topic_len) {
+		return -ENAMETOOLONG;
+	}
+
+	return 0;
+}
+
+int bike_mqtt_build_state_topic(const char *bike_id, char *topic,
+				size_t topic_len)
+{
+	int len;
+
+	if (!bike_id || !bike_id[0] || !topic || topic_len == 0) {
+		return -EINVAL;
+	}
+
+	len = snprintk(topic, topic_len, "bikes/%s/state", bike_id);
+	if (len < 0 || len >= topic_len) {
+		return -ENAMETOOLONG;
+	}
+
+	return 0;
+}
+
+int bike_mqtt_parse_command(char *payload, size_t payload_len,
+			    struct bike_backend_command_msg *msg)
+{
+	struct command_payload {
+		const char *type;
+		const char *rental_id;
+	} decoded = { 0 };
+	static const struct json_obj_descr command_descr[] = {
+		JSON_OBJ_DESCR_PRIM(struct command_payload, type,
+				    JSON_TOK_STRING),
+		JSON_OBJ_DESCR_PRIM(struct command_payload, rental_id,
+				    JSON_TOK_STRING),
+	};
+	int ret;
+
+	if (!payload || payload_len == 0 || !msg) {
+		return -EINVAL;
+	}
+
+	/*
+	 * json_obj_parse() returns string pointers into the mutable payload
+	 * buffer. Copy only validated fields into the zbus command message.
+	 */
+	memset(msg, 0, sizeof(*msg));
+	ret = json_obj_parse(payload, payload_len, command_descr,
+			     ARRAY_SIZE(command_descr), &decoded);
+	if (ret < 0) {
+		return ret;
+	}
+
+	if (!decoded.type || !decoded.rental_id || !decoded.rental_id[0]) {
+		return -EINVAL;
+	}
+
+	if (strlen(decoded.rental_id) >= sizeof(msg->rental_id)) {
+		return -ENAMETOOLONG;
+	}
+
+	if (strcmp(decoded.type, "rent_authorize") == 0) {
+		msg->type = BIKE_BACKEND_RENT_AUTHORIZE;
+	} else if (strcmp(decoded.type, "rent_cancel") == 0) {
+		msg->type = BIKE_BACKEND_RENT_CANCEL;
+	} else {
+		return -ENOTSUP;
+	}
+
+	strcpy(msg->rental_id, decoded.rental_id);
+	return 0;
+}
+
+int bike_mqtt_handle_command_payload(char *payload, size_t payload_len)
+{
+	struct bike_backend_command_msg msg;
+	int rc;
+
+	rc = bike_mqtt_parse_command(payload, payload_len, &msg);
+	if (rc) {
+		LOG_WRN("Rejected MQTT command payload: %d", rc);
+		status_count_parse_error(MQTT_STATUS_ERR_PARSE);
+		return rc;
+	}
+
+	/* Keep all rental behavior inside the state module's zbus listener. */
+	rc = zbus_chan_pub(&backend_command_chan, &msg, K_MSEC(100));
+	if (rc) {
+		LOG_ERR("Failed to publish backend command: %d", rc);
+		status_set_error(rc);
+		return rc;
+	}
+
+	return 0;
+}
+
+int bike_mqtt_format_state_json(const struct bike_state_msg *msg,
+				char *payload, size_t payload_len)
+{
+	int len;
+
+	if (!msg || !payload || payload_len == 0) {
+		return -EINVAL;
+	}
+
+	len = snprintk(payload, payload_len,
+		       "{\"state\":\"%s\",\"rental_id\":\"%s\",\"updated_at_ms\":%lld}",
+		       bike_state_name(msg->state), msg->rental_id,
+		       msg->updated_at_ms);
+	if (len < 0 || len >= payload_len) {
+		return -ENAMETOOLONG;
+	}
+
+	return len;
+}
+
+int bike_mqtt_format_button_json(const struct bike_button_event_msg *msg,
+				 char *payload, size_t payload_len)
+{
+	int len;
+
+	if (!msg || !payload || payload_len == 0) {
+		return -EINVAL;
+	}
+
+	len = snprintk(payload, payload_len,
+		       "{\"type\":\"button_press\",\"uptime_ms\":%lld}",
+		       msg->uptime_ms);
+	if (len < 0 || len >= payload_len) {
+		return -ENAMETOOLONG;
+	}
+
+	return len;
 }
 
 #if defined(CONFIG_MQTT_LIB) && defined(CONFIG_NET_SOCKETS)
@@ -65,18 +272,34 @@ static struct zsock_pollfd fds[1];
 K_SEM_DEFINE(connect_sem, 0, 1);
 static bool thread_running;
 static bool stop_requested;
+static bool session_ended;
+static int session_end_reason;
+static bool mqtt_enabled;
 static char client_id[BIKE_ID_MAX_LEN];
+static struct mqtt_utf8 username;
+static struct mqtt_utf8 password;
 static char command_topic[BIKE_MQTT_TOPIC_MAX_LEN];
+static char state_topic[BIKE_MQTT_TOPIC_MAX_LEN];
+static char event_topic[BIKE_MQTT_TOPIC_MAX_LEN];
+static sec_tag_t tls_sec_tags[] = { CONFIG_BIKE_MQTT_TLS_SEC_TAG };
 
-static int build_command_topic(const char *bike_id, char *topic, size_t topic_len)
+static void status_count_publish_error(int error)
+{
+	k_mutex_lock(&status_lock, K_FOREVER);
+	current_status.publish_error_count++;
+	current_status.last_error = error;
+	k_mutex_unlock(&status_lock);
+}
+
+static int build_button_topic(const char *bike_id, char *topic, size_t topic_len)
 {
 	int len;
 
-	if (!bike_id || !bike_id[0]) {
+	if (!bike_id || !bike_id[0] || !topic || topic_len == 0) {
 		return -EINVAL;
 	}
 
-	len = snprintk(topic, topic_len, "bikes/%s/commands", bike_id);
+	len = snprintk(topic, topic_len, "bikes/%s/events", bike_id);
 	if (len < 0 || len >= topic_len) {
 		return -ENAMETOOLONG;
 	}
@@ -84,9 +307,13 @@ static int build_command_topic(const char *bike_id, char *topic, size_t topic_le
 	return 0;
 }
 
-static int resolve_broker(const char *host, uint16_t port)
+static int resolve_broker(const char *host, uint16_t port,
+			  struct sockaddr_storage *addr)
 {
 	struct zsock_addrinfo hints = {
+#if defined(CONFIG_NRF_MODEM_LIB) && defined(CONFIG_NET_SOCKETS_OFFLOAD)
+		.ai_family = AF_INET,
+#endif
 		.ai_socktype = SOCK_STREAM,
 		.ai_protocol = IPPROTO_TCP,
 	};
@@ -94,7 +321,7 @@ static int resolve_broker(const char *host, uint16_t port)
 	char port_str[BIKE_MQTT_PORT_MAX_LEN];
 	int rc;
 
-	if (!host || !host[0] || !port) {
+	if (!host || !host[0] || !port || !addr) {
 		return -EINVAL;
 	}
 
@@ -102,17 +329,38 @@ static int resolve_broker(const char *host, uint16_t port)
 
 	rc = zsock_getaddrinfo(host, port_str, &hints, &result);
 	if (rc) {
-		return -EIO;
+		LOG_ERR("Failed to resolve MQTT broker %s:%u: %d", host, port,
+			rc);
+		return MQTT_STATUS_ERR_DNS;
 	}
 
-	memcpy(&broker_addr, result->ai_addr, result->ai_addrlen);
+	memset(addr, 0, sizeof(*addr));
+	memcpy(addr, result->ai_addr, result->ai_addrlen);
+	LOG_INF("MQTT broker resolved: %s:%u family=%d", host, port,
+		result->ai_addr->sa_family);
 	zsock_freeaddrinfo(result);
 	return 0;
 }
 
+static socklen_t sockaddr_len(const struct sockaddr *addr)
+{
+	if (addr->sa_family == AF_INET) {
+		return sizeof(struct sockaddr_in);
+	}
+
+	return sizeof(struct sockaddr_in6);
+}
+
 static void prepare_fds(struct mqtt_client *client)
 {
-	fds[0].fd = client->transport.tcp.sock;
+	if (client->transport.type == MQTT_TRANSPORT_NON_SECURE) {
+		fds[0].fd = client->transport.tcp.sock;
+	}
+#if defined(CONFIG_MQTT_LIB_TLS)
+	if (client->transport.type == MQTT_TRANSPORT_SECURE) {
+		fds[0].fd = client->transport.tls.sock;
+	}
+#endif
 	fds[0].events = ZSOCK_POLLIN;
 }
 
@@ -132,6 +380,80 @@ static int subscribe_commands(struct mqtt_client *client)
 	};
 
 	return mqtt_subscribe(client, &subscriptions);
+}
+
+static void mark_session_ended(int reason)
+{
+	/*
+	 * Broker-side failures end the active session but do not disable MQTT.
+	 * The worker decides whether to retry based on mqtt_enabled.
+	 */
+	session_end_reason = reason;
+	session_ended = true;
+}
+
+static int publish_payload(const char *topic, const char *payload)
+{
+	struct mqtt_publish_param param = { 0 };
+	int rc;
+
+	/* zbus observers may fire before the operator requests MQTT. */
+	if (!mqtt_enabled) {
+		return 0;
+	}
+
+	if (!current_status.connected || !current_status.subscribed) {
+		status_count_publish_error(-ENOTCONN);
+		return -ENOTCONN;
+	}
+
+	param.message.topic.topic.utf8 = (uint8_t *)topic;
+	param.message.topic.topic.size = strlen(topic);
+	param.message.topic.qos = MQTT_QOS_0_AT_MOST_ONCE;
+	param.message.payload.data = (uint8_t *)payload;
+	param.message.payload.len = strlen(payload);
+	param.message_id = sys_rand16_get();
+
+	rc = mqtt_publish(&client_ctx, &param);
+	if (rc) {
+		LOG_ERR("MQTT publish failed on %s: %d", topic, rc);
+		status_count_publish_error(MQTT_STATUS_ERR_PUBLISH);
+		return rc;
+	}
+
+	k_mutex_lock(&status_lock, K_FOREVER);
+	current_status.publish_count++;
+	current_status.last_error = 0;
+	k_mutex_unlock(&status_lock);
+	return 0;
+}
+
+static int publish_state_msg(const struct bike_state_msg *msg)
+{
+	char payload[160];
+	int rc;
+
+	rc = bike_mqtt_format_state_json(msg, payload, sizeof(payload));
+	if (rc < 0) {
+		status_count_publish_error(rc);
+		return rc;
+	}
+
+	return publish_payload(state_topic, payload);
+}
+
+static int publish_button_msg(const struct bike_button_event_msg *msg)
+{
+	char payload[96];
+	int rc;
+
+	rc = bike_mqtt_format_button_json(msg, payload, sizeof(payload));
+	if (rc < 0) {
+		status_count_publish_error(rc);
+		return rc;
+	}
+
+	return publish_payload(event_topic, payload);
 }
 
 static void read_publish_payload(struct mqtt_client *client,
@@ -183,7 +505,11 @@ static void read_publish_payload(struct mqtt_client *client,
 
 		LOG_WRN("MQTT payload truncated to %u bytes",
 			CONFIG_BIKE_MQTT_PAYLOAD_BUFFER_SIZE);
+		status_count_parse_error(MQTT_STATUS_ERR_PARSE);
+		return;
 	}
+
+	(void)bike_mqtt_handle_command_payload(payload_buffer, rc);
 }
 
 static void mqtt_evt_handler(struct mqtt_client *client,
@@ -198,9 +524,9 @@ static void mqtt_evt_handler(struct mqtt_client *client,
 			k_mutex_lock(&status_lock, K_FOREVER);
 			current_status.connecting = false;
 			current_status.connected = false;
-			current_status.last_error = evt->result;
+			current_status.last_error = MQTT_STATUS_ERR_CONNACK;
 			k_mutex_unlock(&status_lock);
-			stop_requested = true;
+			mark_session_ended(MQTT_STATUS_ERR_CONNACK);
 			break;
 		}
 
@@ -220,7 +546,8 @@ static void mqtt_evt_handler(struct mqtt_client *client,
 	case MQTT_EVT_SUBACK:
 		if (evt->result) {
 			LOG_ERR("MQTT subscribe failed: %d", evt->result);
-			status_set_error(evt->result);
+			status_set_error(MQTT_STATUS_ERR_SUBACK);
+			mark_session_ended(MQTT_STATUS_ERR_SUBACK);
 			break;
 		}
 
@@ -242,29 +569,215 @@ static void mqtt_evt_handler(struct mqtt_client *client,
 		current_status.last_error = evt->result;
 		k_mutex_unlock(&status_lock);
 		LOG_INF("MQTT disconnected: %d", evt->result);
-		stop_requested = true;
+		mark_session_ended(evt->result);
 		break;
 	default:
 		break;
 	}
 }
 
-static void client_init(void)
+static bool should_use_secure_transport(uint16_t port)
 {
+	if (port == 1883) {
+		return false;
+	}
+	if (port == 8883) {
+		return true;
+	}
+
+	return IS_ENABLED(CONFIG_BIKE_MQTT_SECURE_DEFAULT);
+}
+
+static void client_init(bool secure, const char *host)
+{
+	const char *token = bike_config_get_device_token();
+
 	mqtt_client_init(&client_ctx);
 
 	client_ctx.broker = &broker_addr;
 	client_ctx.evt_cb = mqtt_evt_handler;
 	client_ctx.client_id.utf8 = (uint8_t *)client_id;
 	client_ctx.client_id.size = strlen(client_id);
-	client_ctx.password = NULL;
-	client_ctx.user_name = NULL;
+	username.utf8 = (uint8_t *)client_id;
+	username.size = strlen(client_id);
+	password.utf8 = (uint8_t *)token;
+	password.size = strlen(token);
+	client_ctx.user_name = username.size > 0 ? &username : NULL;
+	client_ctx.password = password.size > 0 ? &password : NULL;
 	client_ctx.protocol_version = MQTT_VERSION_3_1_1;
 	client_ctx.rx_buf = rx_buffer;
 	client_ctx.rx_buf_size = sizeof(rx_buffer);
 	client_ctx.tx_buf = tx_buffer;
 	client_ctx.tx_buf_size = sizeof(tx_buffer);
 	client_ctx.transport.type = MQTT_TRANSPORT_NON_SECURE;
+
+#if defined(CONFIG_MQTT_LIB_TLS)
+	if (secure) {
+		struct mqtt_sec_config *tls_config;
+
+		client_ctx.transport.type = MQTT_TRANSPORT_SECURE;
+		tls_config = &client_ctx.transport.tls.config;
+		tls_config->peer_verify = TLS_PEER_VERIFY_REQUIRED;
+		tls_config->sec_tag_list = tls_sec_tags;
+		tls_config->sec_tag_count = ARRAY_SIZE(tls_sec_tags);
+		tls_config->hostname = host;
+	}
+#else
+	ARG_UNUSED(secure);
+	ARG_UNUSED(host);
+#endif
+}
+
+static bool lte_ready_for_mqtt(void)
+{
+	struct bike_lte_status status;
+
+	bike_lte_status_get(&status);
+	return !status.supported || status.connected;
+}
+
+static void clear_session_status(int reason)
+{
+	k_mutex_lock(&status_lock, K_FOREVER);
+	current_status.connecting = false;
+	current_status.connected = false;
+	current_status.subscribed = false;
+	current_status.disconnect_reason = reason;
+	k_mutex_unlock(&status_lock);
+}
+
+static int start_session(void)
+{
+	const char *host = bike_config_get_mqtt_host();
+	uint16_t port = bike_config_get_mqtt_port();
+	const char *id = bike_config_get_id();
+	bool secure = should_use_secure_transport(port);
+	int rc;
+
+	rc = bike_mqtt_build_command_topic(id, command_topic,
+					   sizeof(command_topic));
+	if (rc) {
+		status_set_error(rc);
+		return rc;
+	}
+
+	rc = bike_mqtt_build_state_topic(id, state_topic, sizeof(state_topic));
+	if (rc) {
+		status_set_error(rc);
+		return rc;
+	}
+
+	rc = build_button_topic(id, event_topic, sizeof(event_topic));
+	if (rc) {
+		status_set_error(rc);
+		return rc;
+	}
+
+	rc = resolve_broker(host, port, &broker_addr);
+	if (rc) {
+		status_set_error(rc);
+		return rc;
+	}
+
+	strncpy(client_id, id, sizeof(client_id) - 1);
+	client_id[sizeof(client_id) - 1] = '\0';
+	client_init(secure, host);
+
+	/* Reset per-session state before MQTT events can arrive. */
+	session_ended = false;
+	session_end_reason = 0;
+
+	k_mutex_lock(&status_lock, K_FOREVER);
+	current_status.connecting = true;
+	current_status.connected = false;
+	current_status.subscribed = false;
+	current_status.secure = secure;
+	current_status.broker_port = port;
+	current_status.last_error = 0;
+	current_status.disconnect_reason = 0;
+	strncpy(current_status.broker_host, host,
+		sizeof(current_status.broker_host) - 1);
+	current_status.broker_host[sizeof(current_status.broker_host) - 1] = '\0';
+	strncpy(current_status.command_topic, command_topic,
+		sizeof(current_status.command_topic) - 1);
+	current_status.command_topic[sizeof(current_status.command_topic) - 1] = '\0';
+	strncpy(current_status.state_topic, state_topic,
+		sizeof(current_status.state_topic) - 1);
+	current_status.state_topic[sizeof(current_status.state_topic) - 1] = '\0';
+	k_mutex_unlock(&status_lock);
+
+	rc = mqtt_connect(&client_ctx);
+	if (rc) {
+		LOG_ERR("MQTT socket connect failed: %d", rc);
+		clear_session_status(MQTT_STATUS_ERR_CONNECT);
+		status_set_error(MQTT_STATUS_ERR_CONNECT);
+		return rc;
+	}
+
+	prepare_fds(&client_ctx);
+	LOG_INF("MQTT connect started: %s:%u (%s)", host, port,
+		secure ? "tls" : "tcp");
+	return 0;
+}
+
+static int poll_session(void)
+{
+	while (mqtt_enabled && !stop_requested && !session_ended) {
+		int timeout = mqtt_keepalive_time_left(&client_ctx);
+		int rc;
+
+		if (timeout < 0) {
+			timeout = 1000;
+		}
+
+		rc = zsock_poll(fds, ARRAY_SIZE(fds), timeout);
+		if (rc < 0) {
+			rc = -errno;
+			LOG_ERR("MQTT poll failed: %d", rc);
+			status_set_error(rc);
+			return rc;
+		}
+
+		if (rc > 0 && (fds[0].revents & ZSOCK_POLLIN)) {
+			rc = mqtt_input(&client_ctx);
+			if (rc) {
+				LOG_ERR("MQTT input failed: %d", rc);
+				status_set_error(rc);
+				return rc;
+			}
+			if (session_ended) {
+				return session_end_reason;
+			}
+		}
+
+		rc = mqtt_live(&client_ctx);
+		if (rc == 0) {
+			rc = mqtt_input(&client_ctx);
+			if (rc) {
+				LOG_ERR("MQTT ping response failed: %d", rc);
+				status_set_error(rc);
+				return rc;
+			}
+			if (session_ended) {
+				return session_end_reason;
+			}
+		} else if (rc != -EAGAIN) {
+			LOG_ERR("MQTT keepalive failed: %d", rc);
+			status_set_error(rc);
+			return rc;
+		}
+	}
+
+	return session_ended ? session_end_reason : 0;
+}
+
+static void wait_before_retry(int32_t backoff_ms)
+{
+	int64_t deadline = k_uptime_get() + backoff_ms;
+
+	while (mqtt_enabled && !stop_requested && k_uptime_get() < deadline) {
+		k_sleep(K_MSEC(MIN(1000, deadline - k_uptime_get())));
+	}
 }
 
 static void mqtt_worker(void *arg1, void *arg2, void *arg3)
@@ -274,60 +787,48 @@ static void mqtt_worker(void *arg1, void *arg2, void *arg3)
 	ARG_UNUSED(arg3);
 
 	for (;;) {
+		int32_t backoff_ms = CONFIG_BIKE_MQTT_RECONNECT_INITIAL_MS;
+
 		k_sem_take(&connect_sem, K_FOREVER);
 
-		while (thread_running && !stop_requested) {
-			int timeout = mqtt_keepalive_time_left(&client_ctx);
+		while (mqtt_enabled && !stop_requested) {
+			bool session_opened = false;
 			int rc;
 
-			if (timeout < 0) {
-				timeout = 1000;
+			if (!lte_ready_for_mqtt()) {
+				/* LTE readiness gates auto-retry and avoids boot loops. */
+				wait_before_retry(1000);
+				continue;
 			}
 
-			rc = zsock_poll(fds, ARRAY_SIZE(fds), timeout);
-			if (rc < 0) {
-				rc = -errno;
-				LOG_ERR("MQTT poll failed: %d", rc);
-				status_set_error(rc);
+			rc = start_session();
+			if (!rc) {
+				session_opened = true;
+				backoff_ms = CONFIG_BIKE_MQTT_RECONNECT_INITIAL_MS;
+				rc = poll_session();
+			}
+
+			if (session_opened) {
+				(void)mqtt_abort(&client_ctx);
+			}
+			clear_session_status(rc);
+
+			if (!mqtt_enabled || stop_requested) {
 				break;
 			}
 
-			if (rc > 0 && (fds[0].revents & ZSOCK_POLLIN)) {
-				rc = mqtt_input(&client_ctx);
-				if (rc) {
-					LOG_ERR("MQTT input failed: %d", rc);
-					status_set_error(rc);
-					break;
-				}
-			}
-
-			rc = mqtt_live(&client_ctx);
-			if (rc == 0) {
-				rc = mqtt_input(&client_ctx);
-				if (rc) {
-					LOG_ERR("MQTT ping response failed: %d", rc);
-					status_set_error(rc);
-					break;
-				}
-			} else if (rc != -EAGAIN) {
-				LOG_ERR("MQTT keepalive failed: %d", rc);
-				status_set_error(rc);
-				break;
-			}
+			k_mutex_lock(&status_lock, K_FOREVER);
+			current_status.reconnect_count++;
+			k_mutex_unlock(&status_lock);
+			wait_before_retry(backoff_ms);
+			/* Bounded exponential backoff keeps retries visible but quiet. */
+			backoff_ms = MIN(backoff_ms * 2,
+					 CONFIG_BIKE_MQTT_RECONNECT_MAX_MS);
 		}
-
-		if (thread_running) {
-			(void)mqtt_abort(&client_ctx);
-		}
-
-		k_mutex_lock(&status_lock, K_FOREVER);
-		current_status.connecting = false;
-		current_status.connected = false;
-		current_status.subscribed = false;
-		k_mutex_unlock(&status_lock);
 
 		thread_running = false;
 		stop_requested = false;
+		clear_session_status(0);
 	}
 }
 
@@ -350,9 +851,6 @@ int bike_mqtt_init(void)
 
 int bike_mqtt_connect(void)
 {
-	const char *host = bike_config_get_mqtt_host();
-	uint16_t port = bike_config_get_mqtt_port();
-	const char *id = bike_config_get_id();
 	int rc;
 
 	if (!current_status.initialized) {
@@ -362,53 +860,73 @@ int bike_mqtt_connect(void)
 		}
 	}
 
+	if (!bike_config_is_valid(bike_config_get())) {
+		status_set_error(-EINVAL);
+		return -EINVAL;
+	}
+
+	mqtt_enabled = true;
+	k_mutex_lock(&status_lock, K_FOREVER);
+	current_status.enabled = true;
+	k_mutex_unlock(&status_lock);
+
 	if (thread_running) {
+		k_sem_give(&connect_sem);
 		return 0;
 	}
-
-	rc = build_command_topic(id, command_topic, sizeof(command_topic));
-	if (rc) {
-		status_set_error(rc);
-		return rc;
-	}
-
-	rc = resolve_broker(host, port);
-	if (rc) {
-		status_set_error(rc);
-		return rc;
-	}
-
-	strncpy(client_id, id, sizeof(client_id) - 1);
-	client_id[sizeof(client_id) - 1] = '\0';
-	client_init();
-
-	rc = mqtt_connect(&client_ctx);
-	if (rc) {
-		status_set_error(rc);
-		return rc;
-	}
-
-	prepare_fds(&client_ctx);
-
-	k_mutex_lock(&status_lock, K_FOREVER);
-	current_status.connecting = true;
-	current_status.connected = false;
-	current_status.subscribed = false;
-	current_status.broker_port = port;
-	current_status.last_error = 0;
-	current_status.disconnect_reason = 0;
-	strncpy(current_status.broker_host, host,
-		sizeof(current_status.broker_host) - 1);
-	current_status.broker_host[sizeof(current_status.broker_host) - 1] = '\0';
-	strncpy(current_status.command_topic, command_topic,
-		sizeof(current_status.command_topic) - 1);
-	current_status.command_topic[sizeof(current_status.command_topic) - 1] = '\0';
-	k_mutex_unlock(&status_lock);
 
 	thread_running = true;
 	stop_requested = false;
 	k_sem_give(&connect_sem);
-	LOG_INF("MQTT connect started: %s:%u", host, port);
+	LOG_INF("MQTT connect requested");
+	return 0;
+}
+
+int bike_mqtt_tcp_probe(void)
+{
+	const char *host = bike_config_get_mqtt_host();
+	uint16_t port = bike_config_get_mqtt_port();
+	struct sockaddr_storage probe_addr;
+	const struct sockaddr *addr = (const struct sockaddr *)&probe_addr;
+	int sock;
+	int rc;
+
+	if (!host[0] || !port) {
+		status_set_error(-EINVAL);
+		return -EINVAL;
+	}
+
+	if (!lte_ready_for_mqtt()) {
+		status_set_error(-ENETUNREACH);
+		return -ENETUNREACH;
+	}
+
+	rc = resolve_broker(host, port, &probe_addr);
+	if (rc) {
+		status_set_error(rc);
+		return rc;
+	}
+
+	sock = zsock_socket(addr->sa_family, SOCK_STREAM, IPPROTO_TCP);
+	if (sock < 0) {
+		rc = -errno;
+		LOG_ERR("MQTT TCP probe socket failed: %d", rc);
+		status_set_error(rc);
+		return rc;
+	}
+
+	rc = zsock_connect(sock, addr, sockaddr_len(addr));
+	if (rc < 0) {
+		rc = -errno;
+		LOG_ERR("MQTT TCP probe failed: %d", rc);
+		status_set_error(rc);
+		(void)zsock_close(sock);
+		return rc;
+	}
+
+	LOG_INF("MQTT TCP probe connected: %s:%u", host, port);
+	status_set_error(0);
+	(void)zsock_close(sock);
 	return 0;
 }
 
@@ -417,9 +935,14 @@ int bike_mqtt_disconnect(void)
 	int rc = 0;
 
 	if (!thread_running) {
+		mqtt_enabled = false;
+		k_mutex_lock(&status_lock, K_FOREVER);
+		current_status.enabled = false;
+		k_mutex_unlock(&status_lock);
 		return 0;
 	}
 
+	mqtt_enabled = false;
 	stop_requested = true;
 	if (current_status.connected || current_status.connecting) {
 		rc = mqtt_disconnect(&client_ctx);
@@ -432,12 +955,33 @@ int bike_mqtt_disconnect(void)
 	current_status.connecting = false;
 	current_status.connected = false;
 	current_status.subscribed = false;
+	current_status.enabled = false;
 	current_status.disconnect_reason = rc;
 	current_status.last_error = rc;
 	k_mutex_unlock(&status_lock);
 
 	return rc;
 }
+
+static void state_listener(const struct zbus_channel *chan)
+{
+	const struct bike_state_msg *msg = zbus_chan_const_msg(chan);
+
+	(void)publish_state_msg(msg);
+}
+
+static void button_listener(const struct zbus_channel *chan)
+{
+	const struct bike_button_event_msg *msg = zbus_chan_const_msg(chan);
+
+	(void)publish_button_msg(msg);
+}
+
+ZBUS_LISTENER_DEFINE(mqtt_state_listener_node, state_listener);
+ZBUS_CHAN_ADD_OBS(bike_state_chan, mqtt_state_listener_node, 20);
+
+ZBUS_LISTENER_DEFINE(mqtt_button_listener_node, button_listener);
+ZBUS_CHAN_ADD_OBS(button_event_chan, mqtt_button_listener_node, 20);
 
 #else
 
@@ -454,6 +998,12 @@ int bike_mqtt_connect(void)
 }
 
 int bike_mqtt_disconnect(void)
+{
+	current_status.last_error = -ENOTSUP;
+	return -ENOTSUP;
+}
+
+int bike_mqtt_tcp_probe(void)
 {
 	current_status.last_error = -ENOTSUP;
 	return -ENOTSUP;
