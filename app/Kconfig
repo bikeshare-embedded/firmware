@@ -6,7 +6,7 @@ source "Kconfig.zephyr"
 
 config APP_VERSION
 	string "Application version"
-	default "0.0.0"
+	default "0.3.0"
 	help
 	  Firmware version string reported at boot and used for telemetry.
 
@@ -64,3 +64,49 @@ config BIKE_MQTT_THREAD_PRIORITY
 	default 7
 	help
 	  Priority for the MQTT socket poll and keepalive worker.
+
+config BIKE_TELEMETRY_PERIOD_SECONDS
+	int "Telemetry publish period in seconds"
+	default 10
+	help
+	  Period used by the telemetry work item to publish samples on zbus.
+
+config BIKE_GNSS
+	bool "Enable best-effort GNSS sampling"
+	default n
+	depends on NRF_MODEM_LIB
+	help
+	  Enable direct nRF modem GNSS sampling for nRF9160 targets. The module
+	  starts from background work and keeps reporting no-fix telemetry if GNSS
+	  cannot start or has not acquired a fix.
+
+config BIKE_GNSS_FIX_INTERVAL_SECONDS
+	int "GNSS fix interval in seconds"
+	default 10
+	depends on BIKE_GNSS
+	help
+	  Time between GNSS fixes. Use 1 for continuous navigation mode, or 10
+	  or more for periodic navigation mode.
+
+config BIKE_GNSS_FIX_RETRY_SECONDS
+	int "GNSS fix retry timeout in seconds"
+	default 30
+	depends on BIKE_GNSS
+	help
+	  Maximum time GNSS should search for a fix during each periodic window.
+
+config BIKE_GNSS_LOW_ACCURACY
+	bool "Allow low-accuracy GNSS fixes"
+	default n
+	depends on BIKE_GNSS
+	help
+	  Allow the modem GNSS stack to report low-accuracy fixes when a normal
+	  accuracy fix is not available.
+
+config BIKE_GNSS_PRIORITY_MODE
+	bool "Prioritize GNSS over LTE"
+	default y
+	depends on BIKE_GNSS
+	help
+	  Enable modem GNSS priority mode so GNSS can get priority over LTE when
+	  searching for a fix.

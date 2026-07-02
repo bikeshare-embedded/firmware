@@ -25,7 +25,8 @@ Modules:
 | `lte` | Initializes the nRF9160 modem, attaches to LTE, and exposes attach diagnostics. |
 | `mqtt_client` | Manages MQTT connectivity, subscribes to backend commands, and publishes telemetry/events. |
 | `sensor` | Provides optional MPU6050 motion samples when configured in devicetree. |
-| `telemetry` | Planned module for periodic telemetry samples, including state, uptime, LTE status, trip data, and best-effort GNSS. |
+| `gnss` | Starts modem GNSS best-effort in background and caches the latest fix/no-fix status. |
+| `telemetry` | Produces periodic zbus telemetry samples, including state, uptime, and best-effort GNSS. |
 
 ## Data Flow
 
@@ -45,6 +46,7 @@ flowchart LR
     StateChannel --> Telemetry[telemetry]
     StateChannel --> MQTT
 
+    GNSS[gnss nRF modem] --> Telemetry
     Telemetry --> TelemetryChannel[zbus: telemetry_sample]
     TelemetryChannel --> MQTT
 ```
@@ -60,7 +62,7 @@ The MVP uses four logical channels:
 | `bike_state` | `bike_state` | `led_status`, `telemetry`, `mqtt_client` | Publishes authoritative state changes. |
 | `telemetry_sample` | `telemetry` | `mqtt_client` | Publishes periodic telemetry samples. |
 
-Message contents are implemented as compact C structs in `app/include/channels.h`. The current channel scaffolding covers button events, backend commands, state publications, and telemetry samples; button/backend/state are actively used by implemented modules, `button` publishes button events, and `led` observes the state channel.
+Message contents are implemented as compact C structs in `app/include/channels.h`. The current channel scaffolding covers button events, backend commands, state publications, and telemetry samples. `telemetry_sample` includes bike ID, state, `uptime_ms`, an explicit `gnss_fix_valid` flag, and fixed-point GNSS latitude/longitude/altitude/accuracy fields when the fix is valid.
 
 ## State Machine
 
@@ -173,7 +175,9 @@ Telemetry should include:
 - Best-effort GNSS fields when a valid fix exists.
 - An explicit no-fix indication when GNSS is unavailable.
 
-GNSS must not block trips, state transitions, MQTT connection, or the class demo.
+Implemented telemetry currently publishes this data periodically on `telemetry_sample_chan`; MQTT serialization and broker publication remain separate MQTT module work.
+
+GNSS must not block trips, state transitions, MQTT connection, or the class demo. The implemented GNSS module starts from Zephyr system workqueue background work, caches the latest PVT fix from `nrf_modem_gnss` on nRF9160 builds, and reports no-fix when unsupported, not started, or not yet fixed.
 
 ## Execution Model
 
@@ -182,7 +186,8 @@ GNSS must not block trips, state transitions, MQTT connection, or the class demo
 - `bike_state` subscribes to `button_event` and `backend_command` and owns all state transitions.
 - `bike_shell` can publish simulated backend commands and button events for native-simulation demos.
 - `led_status` observes `bike_state` and runs blink timing through Zephyr timers/work.
-- `telemetry` runs periodically through a work item or thread.
+- `gnss` starts modem GNSS through a background work item and updates a mutex-protected latest-fix cache from modem PVT events.
+- `telemetry` runs periodically through a delayed work item and publishes `telemetry_sample_chan`.
 - `lte` owns modem initialization, APN/PDN configuration, LTE attach, disconnect, and shell diagnostics.
 - `mqtt_client` owns MQTT connection, command subscription, publish retries, and reconnect behavior after LTE is available.
 - LTE/MQTT disconnects do not move an active trip to `ERROR`; local state continues and the MQTT client retries in the background.
@@ -193,8 +198,8 @@ Recommended project configuration layout:
 
 - Common Zephyr subsystem options live in `app/prj.conf`.
 - `native_sim` TAP networking and static IP settings live in `app/boards/native_sim.conf` and `app/boards/native_sim_native_64.conf`.
-- nRF9160 DK hardware persistence, GPIO, UART shell, LTE modem options, and generic MQTT/network library scaffolding live in `app/boards/nrf9160dk_nrf9160_ns.conf`.
+- nRF9160 DK hardware persistence, GPIO, UART shell, LTE modem, GNSS, and generic MQTT/network library scaffolding live in `app/boards/nrf9160dk_nrf9160_ns.conf`.
 - The nRF9160 settings partition is selected in `app/boards/nrf9160dk_nrf9160_ns.overlay`.
-- GNSS options should be added to the nRF9160 board configuration when best-effort GNSS telemetry is implemented.
+- `CONFIG_BIKE_GNSS` is enabled only in the nRF9160 board configuration so native simulation keeps using the no-hardware GNSS stub.
 
 This avoids mixing hardware modem options with host-simulation options.

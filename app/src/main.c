@@ -16,26 +16,30 @@
 
 #include "button.h"
 #include "config.h"
+#include "gnss.h"
 #include "led.h"
 #include "lte.h"
 #include "mqtt_client.h"
 #include "sensor.h"
 #include "state.h"
+#include "telemetry.h"
 
 LOG_MODULE_REGISTER(bikeshare, LOG_LEVEL_INF);
 
 int main(void)
 {
-	LOG_INF("Bikeshare. Version: %s", CONFIG_APP_VERSION);
+	LOG_INF("Version: %s", CONFIG_APP_VERSION);
 
 	/* Initialize modules */
 	bike_config_init();
 	bike_lte_init();
 	bike_mqtt_init();
+	bike_gnss_init();
 	led_status_init();
 	button_input_init();
 	bike_state_init();
-	/* motion_sensor_init(); */
+	bike_telemetry_init();
+	motion_sensor_init();
 
 	if (bike_config_is_valid(bike_config_get())) {
 		(void)bike_lte_connect();

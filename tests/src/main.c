@@ -6,9 +6,11 @@
 #include "channels.h"
 #include "button.h"
 #include "config.h"
+#include "gnss.h"
 #include "state.h"
 #include "led.h"
 #include "mqtt_client.h"
+#include "telemetry.h"
 
 ZTEST(bike_config, test_config_validation)
 {
@@ -239,8 +241,94 @@ ZTEST(mqtt_client, test_error_names)
 	zassert_equal(strcmp(bike_mqtt_error_name(-12345), "errno"), 0);
 }
 
+ZTEST(telemetry, test_sample_includes_valid_gnss_fix)
+{
+	struct bike_gnss_fix fix = {
+		.supported = true,
+		.running = true,
+		.valid = true,
+		.uptime_ms = 1200,
+		.latitude_microdegrees = -3456789,
+		.longitude_microdegrees = -38123456,
+		.altitude_mm = 12345,
+		.accuracy_mm = 6789,
+	};
+	struct telemetry_sample_msg sample;
+
+	bike_telemetry_fill_sample(&sample, "BIKE_TST", BIKE_STATE_IN_USE,
+				   4567, &fix);
+
+	zassert_equal(strcmp(sample.bike_id, "BIKE_TST"), 0);
+	zassert_equal(sample.state, BIKE_STATE_IN_USE);
+	zassert_equal(sample.uptime_ms, 4567);
+	zassert_true(sample.gnss_fix_valid);
+	zassert_equal(sample.gnss_latitude_microdegrees, -3456789);
+	zassert_equal(sample.gnss_longitude_microdegrees, -38123456);
+	zassert_equal(sample.gnss_altitude_mm, 12345);
+	zassert_equal(sample.gnss_accuracy_mm, 6789);
+}
+
+ZTEST(telemetry, test_sample_reports_no_fix_explicitly)
+{
+	struct bike_gnss_fix fix = {
+		.supported = true,
+		.running = true,
+		.valid = false,
+		.uptime_ms = 1200,
+		.latitude_microdegrees = -3456789,
+		.longitude_microdegrees = -38123456,
+		.altitude_mm = 12345,
+		.accuracy_mm = 6789,
+	};
+	struct telemetry_sample_msg sample;
+
+	bike_telemetry_fill_sample(&sample, "BIKE_TST", BIKE_STATE_AVAILABLE,
+				   4567, &fix);
+
+	zassert_equal(strcmp(sample.bike_id, "BIKE_TST"), 0);
+	zassert_equal(sample.state, BIKE_STATE_AVAILABLE);
+	zassert_equal(sample.uptime_ms, 4567);
+	zassert_false(sample.gnss_fix_valid);
+	zassert_equal(sample.gnss_latitude_microdegrees, 0);
+	zassert_equal(sample.gnss_longitude_microdegrees, 0);
+	zassert_equal(sample.gnss_altitude_mm, 0);
+	zassert_equal(sample.gnss_accuracy_mm, 0);
+}
+
+ZTEST(telemetry, test_gnss_cache_transitions_valid_to_no_fix)
+{
+	struct bike_gnss_fix valid_fix = {
+		.supported = true,
+		.running = true,
+		.valid = true,
+		.uptime_ms = 100,
+		.latitude_microdegrees = 111,
+		.longitude_microdegrees = 222,
+		.altitude_mm = 333,
+	};
+	struct bike_gnss_fix no_fix = {
+		.supported = true,
+		.running = true,
+		.valid = false,
+		.uptime_ms = 200,
+	};
+	struct bike_gnss_fix latest;
+
+	bike_gnss_init();
+	bike_gnss_store_fix(&valid_fix);
+	zassert_true(bike_gnss_get_latest(&latest));
+	zassert_equal(latest.latitude_microdegrees, 111);
+
+	bike_gnss_store_fix(&no_fix);
+	zassert_false(bike_gnss_get_latest(&latest));
+	zassert_false(latest.valid);
+	zassert_equal(latest.uptime_ms, 200);
+	zassert_equal(latest.latitude_microdegrees, 0);
+}
+
 ZTEST_SUITE(bike_config, NULL, NULL, NULL, NULL, NULL);
 ZTEST_SUITE(bike_state, NULL, NULL, NULL, NULL, NULL);
 ZTEST_SUITE(led_status, NULL, NULL, NULL, NULL, NULL);
 ZTEST_SUITE(button_input, NULL, NULL, NULL, NULL, NULL);
 ZTEST_SUITE(mqtt_client, NULL, NULL, NULL, NULL, NULL);
+ZTEST_SUITE(telemetry, NULL, NULL, NULL, NULL, NULL);

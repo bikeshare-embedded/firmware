@@ -62,6 +62,14 @@ struct telemetry_sample_msg {
 	int64_t uptime_ms;
 	/** True if the GNSS fix backing this sample is valid. */
 	bool gnss_fix_valid;
+	/** Latitude in microdegrees when @ref gnss_fix_valid is true. */
+	int32_t gnss_latitude_microdegrees;
+	/** Longitude in microdegrees when @ref gnss_fix_valid is true. */
+	int32_t gnss_longitude_microdegrees;
+	/** Altitude above WGS-84 ellipsoid in millimeters when valid. */
+	int32_t gnss_altitude_mm;
+	/** Horizontal accuracy in millimeters when valid, or 0 if unknown. */
+	uint32_t gnss_accuracy_mm;
 };
 
 /** Published on each debounced physical button press. */

@@ -18,6 +18,8 @@ target_sources(app PRIVATE
 	src/lte.c
 	src/mqtt_client.c
 	src/sensor.c
+	src/gnss.c
+	src/telemetry.c
 )
 
 target_include_directories(app PRIVATE include)

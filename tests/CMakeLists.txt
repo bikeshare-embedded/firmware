@@ -10,7 +10,9 @@ target_sources(app PRIVATE
 	../app/src/button.c
 	../app/src/channels.c
 	../app/src/config.c
+	../app/src/gnss.c
 	../app/src/led.c
-	../app/src/mqtt_client.c
 	../app/src/state.c
+	../app/src/mqtt_client.c
+	../app/src/telemetry.c
 )
