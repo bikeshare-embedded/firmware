@@ -33,7 +33,7 @@ Current recommended command for this workspace:
 west twister -p native_sim/native/64 -T bikeshare-firmware/tests
 ```
 
-The repository now has an initial `tests/` application for config validation, core state transitions, LED state-to-pattern mapping, LED cached-init behavior, button event publishing, and button debounce filtering. Additional suites are still planned for telemetry formatting, transport diagnostics, and more backend edge cases.
+The repository has a `tests/` application for config validation, core state transitions, LED state-to-pattern mapping, LED cached-init behavior, button event publishing, button debounce filtering, telemetry sample formatting, and GNSS valid/no-fix cache transitions. Additional suites are still planned for timeout timing, transport diagnostics, and more backend edge cases.
 
 ## Planned ZTEST Suites
 
@@ -44,7 +44,7 @@ The repository now has an initial `tests/` application for config validation, co
 | `led_status` | Validate state-to-pattern mapping. | `UNREGISTERED=off`, `AVAILABLE=slow blink`, `RESERVED=fast blink`, `IN_USE=solid on`, `ERROR=SOS/error`. Initial coverage exists. |
 | `button_input` | Validate button event publishing into the state machine. | Published button events move `RESERVED -> IN_USE` and `IN_USE -> AVAILABLE`; duplicate presses inside the debounce window are ignored. Initial coverage exists. |
 | `bike_config` | Validate configuration handling. | Required fields, non-empty strings, valid `mqtt_port` in `1..65535`, invalid config keeps bike `UNREGISTERED`. Initial coverage exists. |
-| `telemetry` | Validate telemetry formatting logic. | Includes bike ID, state, `uptime_ms`, rental ID when active, trip duration, LTE status placeholder, GNSS fix/no-fix status. |
+| `telemetry` | Validate telemetry formatting logic. | Includes bike ID, state, `uptime_ms`, GNSS fix/no-fix status, and clears coordinate fields when no fix is available. Initial coverage exists. |
 
 ## State-Machine Test Cases
 
@@ -145,6 +145,7 @@ bike sim authorize RENTAL_001
 - Confirm MQTT event messages are published for reservation, trip start, and trip end.
 - Confirm telemetry messages are published periodically.
 - Confirm GNSS reports either a valid fix or an explicit no-fix status.
+- Run `bike gnss` and confirm it reports supported/running/fix/last-error status without blocking the shell.
 - Run `bike sim authorize RENTAL_002` and do not press the button; confirm timeout returns the bike to `AVAILABLE` after 60 seconds.
 - Disconnect MQTT broker or network temporarily; confirm local state continues and reconnect attempts are logged.
 
@@ -177,6 +178,7 @@ The demo is considered successful when:
 ## Known Test Limitations
 
 - GNSS fixes may be unavailable indoors or during short demos.
+- Native-simulation tests do not exercise real `nrf_modem_gnss`, satellite acquisition, antenna behavior, or modem functional-mode interactions; they only validate cache/telemetry no-fix and valid-fix logic.
 - LTE registration depends on SIM, antenna, network coverage, and APN configuration.
 - Local Mosquitto must be reachable from the cellular network.
-- Current repository code implements the initial config/state/LED/button test application plus LTE/MQTT diagnostics. Hardware validation and several planned suites are still pending.
+- Current repository code implements native tests for config/state/LED/button and telemetry/GNSS formatting logic plus LTE/MQTT diagnostics. Hardware validation, real GNSS fix acquisition, MQTT telemetry publication, and several planned suites are still pending.

@@ -13,6 +13,7 @@
 
 #include "channels.h"
 #include "config.h"
+#include "gnss.h"
 #include "lte.h"
 #include "mqtt_client.h"
 #include "state.h"
@@ -204,6 +205,63 @@ static int cmd_bike_lte_disconnect(const struct shell *sh, size_t argc, char **a
 	return 0;
 }
 
+static int64_t decimal_abs64(int64_t value)
+{
+	return value < 0 ? -value : value;
+}
+
+static void shell_print_fixed(const struct shell *sh, const char *label,
+			      int32_t value, int32_t scale, int32_t width,
+			      const char *suffix)
+{
+	const char *sign = value < 0 ? "-" : "";
+	int64_t absolute = decimal_abs64(value);
+
+	shell_print(sh, "%s%s%lld.%0*lld%s", label, sign,
+		    absolute / scale, width, absolute % scale, suffix);
+}
+
+static void shell_print_microdegrees(const struct shell *sh, const char *label,
+				     int32_t microdegrees)
+{
+	shell_print_fixed(sh, label, microdegrees, 1000000, 6, "");
+}
+
+static void shell_print_millimeters(const struct shell *sh, const char *label,
+				    int32_t millimeters)
+{
+	shell_print_fixed(sh, label, millimeters, 1000, 3, " m");
+}
+
+static int cmd_bike_gnss_status(const struct shell *sh, size_t argc, char **argv)
+{
+	struct bike_gnss_fix fix;
+
+	ARG_UNUSED(argc);
+	ARG_UNUSED(argv);
+
+	(void)bike_gnss_get_latest(&fix);
+	shell_print(sh, "GNSS supported:   %s", fix.supported ? "yes" : "no");
+	shell_print(sh, "Running:          %s", fix.running ? "yes" : "no");
+	shell_print(sh, "Fix valid:        %s", fix.valid ? "yes" : "no");
+	shell_print(sh, "Last update:      %lld ms", fix.uptime_ms);
+	shell_print(sh, "Last error:       %d", fix.last_error);
+
+	if (fix.valid) {
+		shell_print_microdegrees(sh, "Latitude:         ",
+					 fix.latitude_microdegrees);
+		shell_print_microdegrees(sh, "Longitude:        ",
+					 fix.longitude_microdegrees);
+		shell_print_millimeters(sh, "Altitude:         ",
+					fix.altitude_mm);
+		shell_print(sh, "Accuracy:         %u.%03u m",
+			    fix.accuracy_mm / 1000, fix.accuracy_mm % 1000);
+		shell_print(sh, "Satellites used:  %u", fix.satellites_used);
+	}
+
+	return 0;
+}
+
 static int cmd_bike_mqtt_status(const struct shell *sh, size_t argc, char **argv)
 {
 	struct bike_mqtt_status status;
@@ -370,6 +428,7 @@ SHELL_STATIC_SUBCMD_SET_CREATE(sub_bike,
 	SHELL_CMD(set, &sub_bike_set, "Configure bike parameters", NULL),
 	SHELL_CMD(get, NULL, "Show current configuration", cmd_bike_get),
 	SHELL_CMD(state, NULL, "Show current state", cmd_bike_state),
+	SHELL_CMD(gnss, NULL, "Show GNSS fix status", cmd_bike_gnss_status),
 	SHELL_CMD(lte, &sub_bike_lte, "LTE modem diagnostics", NULL),
 	SHELL_CMD(mqtt, &sub_bike_mqtt, "MQTT client diagnostics", NULL),
 	SHELL_CMD(sim, &sub_bike_sim, "Simulate backend and button events", NULL),

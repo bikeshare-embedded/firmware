@@ -6,8 +6,10 @@
 #include "channels.h"
 #include "button.h"
 #include "config.h"
+#include "gnss.h"
 #include "state.h"
 #include "led.h"
+#include "telemetry.h"
 
 ZTEST(bike_config, test_config_validation)
 {
@@ -88,7 +90,7 @@ ZTEST(led_status, test_cached_pattern_is_applied_on_init)
 
 	zassert_ok(led_status_init());
 	zassert_equal(led_status_get_pattern(), LED_STATUS_BLINK_SLOW);
-	zassert_true(led_status_is_on()); // The LED should be on after init since the pattern is BLINK_SLOW, even when channel message was published before initialization.
+	zassert_true(led_status_is_on());
 }
 
 ZTEST(button_input, test_publish_press_drives_state_machine)
@@ -128,20 +130,106 @@ ZTEST(button_input, test_debounce_rejects_duplicate_press)
 	zassert_ok(bike_state_authorize("RENTAL_004"));
 	zassert_equal(bike_state_get(), BIKE_STATE_RESERVED);
 
-	zassert_ok(button_input_publish_press_debounced(1000)); // First press, should be accepted
+	zassert_ok(button_input_publish_press_debounced(1000));
 	zassert_equal(bike_state_get(), BIKE_STATE_IN_USE);
 
 	zassert_equal(button_input_publish_press_debounced(
-			      1000 + BUTTON_INPUT_DEBOUNCE_MS - 1), // Second press, within debounce period, should be rejected
+			      1000 + BUTTON_INPUT_DEBOUNCE_MS - 1),
 		      -EALREADY);
-	zassert_equal(bike_state_get(), BIKE_STATE_IN_USE); // State should remain IN_USE since the second press was rejected
+	zassert_equal(bike_state_get(), BIKE_STATE_IN_USE);
 
 	zassert_ok(button_input_publish_press_debounced(
-		1000 + BUTTON_INPUT_DEBOUNCE_MS)); // Third press, after debounce period, should be accepted
+		1000 + BUTTON_INPUT_DEBOUNCE_MS));
 	zassert_equal(bike_state_get(), BIKE_STATE_AVAILABLE);
+}
+
+ZTEST(telemetry, test_sample_includes_valid_gnss_fix)
+{
+	struct bike_gnss_fix fix = {
+		.supported = true,
+		.running = true,
+		.valid = true,
+		.uptime_ms = 1200,
+		.latitude_microdegrees = -3456789,
+		.longitude_microdegrees = -38123456,
+		.altitude_mm = 12345,
+		.accuracy_mm = 6789,
+	};
+	struct telemetry_sample_msg sample;
+
+	bike_telemetry_fill_sample(&sample, "BIKE_TST", BIKE_STATE_IN_USE,
+				   4567, &fix);
+
+	zassert_equal(strcmp(sample.bike_id, "BIKE_TST"), 0);
+	zassert_equal(sample.state, BIKE_STATE_IN_USE);
+	zassert_equal(sample.uptime_ms, 4567);
+	zassert_true(sample.gnss_fix_valid);
+	zassert_equal(sample.gnss_latitude_microdegrees, -3456789);
+	zassert_equal(sample.gnss_longitude_microdegrees, -38123456);
+	zassert_equal(sample.gnss_altitude_mm, 12345);
+	zassert_equal(sample.gnss_accuracy_mm, 6789);
+}
+
+ZTEST(telemetry, test_sample_reports_no_fix_explicitly)
+{
+	struct bike_gnss_fix fix = {
+		.supported = true,
+		.running = true,
+		.valid = false,
+		.uptime_ms = 1200,
+		.latitude_microdegrees = -3456789,
+		.longitude_microdegrees = -38123456,
+		.altitude_mm = 12345,
+		.accuracy_mm = 6789,
+	};
+	struct telemetry_sample_msg sample;
+
+	bike_telemetry_fill_sample(&sample, "BIKE_TST", BIKE_STATE_AVAILABLE,
+				   4567, &fix);
+
+	zassert_equal(strcmp(sample.bike_id, "BIKE_TST"), 0);
+	zassert_equal(sample.state, BIKE_STATE_AVAILABLE);
+	zassert_equal(sample.uptime_ms, 4567);
+	zassert_false(sample.gnss_fix_valid);
+	zassert_equal(sample.gnss_latitude_microdegrees, 0);
+	zassert_equal(sample.gnss_longitude_microdegrees, 0);
+	zassert_equal(sample.gnss_altitude_mm, 0);
+	zassert_equal(sample.gnss_accuracy_mm, 0);
+}
+
+ZTEST(telemetry, test_gnss_cache_transitions_valid_to_no_fix)
+{
+	struct bike_gnss_fix valid_fix = {
+		.supported = true,
+		.running = true,
+		.valid = true,
+		.uptime_ms = 100,
+		.latitude_microdegrees = 111,
+		.longitude_microdegrees = 222,
+		.altitude_mm = 333,
+	};
+	struct bike_gnss_fix no_fix = {
+		.supported = true,
+		.running = true,
+		.valid = false,
+		.uptime_ms = 200,
+	};
+	struct bike_gnss_fix latest;
+
+	bike_gnss_init();
+	bike_gnss_store_fix(&valid_fix);
+	zassert_true(bike_gnss_get_latest(&latest));
+	zassert_equal(latest.latitude_microdegrees, 111);
+
+	bike_gnss_store_fix(&no_fix);
+	zassert_false(bike_gnss_get_latest(&latest));
+	zassert_false(latest.valid);
+	zassert_equal(latest.uptime_ms, 200);
+	zassert_equal(latest.latitude_microdegrees, 0);
 }
 
 ZTEST_SUITE(bike_config, NULL, NULL, NULL, NULL, NULL);
 ZTEST_SUITE(bike_state, NULL, NULL, NULL, NULL, NULL);
 ZTEST_SUITE(led_status, NULL, NULL, NULL, NULL, NULL);
 ZTEST_SUITE(button_input, NULL, NULL, NULL, NULL, NULL);
+ZTEST_SUITE(telemetry, NULL, NULL, NULL, NULL, NULL);

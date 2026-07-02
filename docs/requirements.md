@@ -19,17 +19,17 @@ Therefore, instructor approval is required for LTE/4G to count as the communicat
 | LED | Onboard LED through devicetree alias `led0`. | State changes produce documented LED patterns. | `led_status` observes bike state and drives/logically tracks patterns. Hardware validation still pending. |
 | Button | Onboard button through devicetree alias `sw0`. | Button starts trip from `RESERVED` and ends trip from `IN_USE`. | `button_input` publishes debounced zbus button events from `sw0`; hardware validation still pending. |
 | Communication interface | LTE/4G modem on nRF9160 DK with MQTT. | Device connects over LTE and exchanges MQTT messages with Mosquitto. | Initial LTE attach and MQTT client diagnostics implemented. Command parsing and telemetry publishing remain pending. Requires instructor approval for requirement compliance. |
-| Optional GNSS | Best-effort GNSS telemetry on nRF9160. | Telemetry includes location when a fix is valid and no-fix status otherwise. | Not implemented yet. |
+| Optional GNSS | Best-effort GNSS telemetry on nRF9160. | Telemetry includes location when a fix is valid and no-fix status otherwise. | Implemented as a background `gnss` cache plus `telemetry_sample_chan` fields; real fix acquisition still needs nRF9160 DK/outdoor validation. |
 
 ## Zephyr Subsystem Requirements
 
 | Requirement | Target implementation | Verification | Current status |
 | --- | --- | --- | --- |
 | Logging | Zephyr Logging for boot, config, LTE/MQTT lifecycle, backend commands, state transitions, trips, telemetry publish results, warnings, and errors. | UART logs during demo and tests. | Basic logging and LTE lifecycle logging exist. Policy not fully implemented. |
-| Shell | Shell commands for setup, diagnostics, and simulated backend rental commands. | Run `bike set ...`, `bike get`, `bike state`, `bike lte status`, `bike mqtt status`, `bike sim authorize`, and `bike sim cancel`. | Config, state, LTE/MQTT diagnostic, and simulation commands implemented. |
+| Shell | Shell commands for setup, diagnostics, and simulated backend rental commands. | Run `bike set ...`, `bike get`, `bike state`, `bike gnss`, `bike lte status`, `bike mqtt status`, `bike sim authorize`, and `bike sim cancel`. | Config, state, GNSS, LTE/MQTT diagnostic, and simulation commands implemented. |
 | Settings | Zephyr Settings with NVS backend on hardware. | Configure settings, reboot, verify values persist. | Runtime Settings exists for development only. NVS pending. |
-| zbus | Channels: `button_event`, `backend_command`, `bike_state`, and `telemetry_sample`. | Unit tests and runtime logs show decoupled module communication. | Channel scaffolding exists; backend/button/state channels are used, `button_input` publishes button events, and `led_status` observes state. |
-| ZTEST | Unit tests for state, backend commands, LED mapping, button event flow, button debounce, config validation, and telemetry formatting. | Run Twister on `native_sim/native/64`. | Initial config, state, LED mapping, LED cached-init, button event, and debounce tests added. Telemetry tests pending. |
+| zbus | Channels: `button_event`, `backend_command`, `bike_state`, and `telemetry_sample`. | Unit tests and runtime logs show decoupled module communication. | Backend/button/state channels are used; telemetry publishes periodic samples for future MQTT consumption. |
+| ZTEST | Unit tests for state, backend commands, LED mapping, button event flow, button debounce, config validation, and telemetry formatting. | Run Twister on `native_sim/native/64`. | Config, state, LED mapping, LED cached-init, button event, debounce, telemetry formatting, and GNSS valid/no-fix cache transition tests exist. |
 | Twister | Automated test execution for non-hardware logic. | `west twister ...` passes. | Initial test application exists under `tests/`; `native_sim/native/64` avoids hosts missing default native simulator 32-bit runtime libraries. |
 
 ## Functional Requirements
@@ -49,7 +49,7 @@ Therefore, instructor approval is required for LTE/4G to count as the communicat
 | Trip end | Button press in `IN_USE` moves to `AVAILABLE`. | Button demo and state test. | State transition and debounced `button_input` event publishing implemented; hardware validation pending. Shell can simulate button event. |
 | Invalid commands | Invalid, duplicate, or state-incompatible backend commands are warned and rejected without state change. | Backend command tests. | Initial rejection behavior implemented. |
 | LED indication | One LED shows state pattern. | Manual demo and LED mapping test. | State-to-pattern mapping and `led0` driver path implemented; hardware demo validation pending. |
-| Telemetry | Publish periodic telemetry over MQTT. | Broker receives messages. | Not implemented yet. |
+| Telemetry | Publish periodic telemetry for MQTT consumption. | `telemetry_sample_chan` carries samples with explicit GNSS fix/no-fix status; future MQTT bridge publishes them to the broker. | Periodic zbus telemetry implemented. MQTT serialization/publication of telemetry remains pending. |
 | Offline behavior | Local state continues during LTE/MQTT disconnect; MQTT reconnects in background. | Manual disconnect/reconnect validation. | Not implemented yet. |
 
 ## Logging Policy
@@ -64,16 +64,16 @@ Use Zephyr Logging levels consistently:
 
 ## Current Implementation Gaps
 
-The repository currently implements the early configuration, native-simulation, LED, and button skeleton. The following work remains before the documentation and firmware match:
+The repository currently implements the core configuration, state, LED, button, LTE/MQTT diagnostics, GNSS cache, and zbus telemetry scaffolding. The following work remains before the documentation and firmware match the full demo target:
 
 - Validate LTE attach on nRF9160 DK hardware with a real SIM/APN.
-- Validate board-specific nRF9160 LTE, MQTT, and NVS configuration on hardware.
+- Validate board-specific nRF9160 LTE, MQTT, GNSS, and NVS configuration on hardware.
 - Validate hardware persistence with NVS instead of runtime-only Settings.
 - Validate LED GPIO behavior on nRF9160 DK hardware.
 - Validate button GPIO behavior on nRF9160 DK hardware.
-- Complete MQTT command parsing and telemetry/event publishing over zbus.
-- Add best-effort GNSS telemetry.
-- Expand ZTEST/Twister tests for telemetry, timeout timing, and more backend edge cases.
+- Complete MQTT command parsing and telemetry/event publication to the broker.
+- Validate real GNSS fix acquisition on nRF9160 DK hardware.
+- Expand ZTEST/Twister tests for timeout timing and more backend edge cases.
 - Add the final demo flow.
 
 ## Reference

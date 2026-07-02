@@ -7,9 +7,11 @@ target_include_directories(app PRIVATE ../app/include)
 
 target_sources(app PRIVATE
 	src/main.c
-	../app/src/app_channels.c
-	../app/src/button_input.c
-	../app/src/bike_config.c
-	../app/src/bike_state.c
-	../app/src/led_status.c
+	../app/src/button.c
+	../app/src/channels.c
+	../app/src/config.c
+	../app/src/gnss.c
+	../app/src/led.c
+	../app/src/state.c
+	../app/src/telemetry.c
 )
