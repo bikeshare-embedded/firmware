@@ -16,15 +16,16 @@ Modules:
 
 | Module | Responsibility |
 | --- | --- |
-| `bike_config` | Load, validate, save, and expose persisted settings. |
-| `bike_shell` | Provides setup, state diagnostic, and local simulation shell commands. |
-| `app_channels` | Defines zbus channels and shared message types. |
-| `bike_state` | Owns the authoritative state machine and rental context. |
-| `button_input` | Reads the physical button through `sw0` and publishes button events. |
-| `led_status` | Observes bike state and drives the LED pattern through `led0`. |
+| `config` | Load, validate, save, and expose persisted settings. |
+| `shell` | Provides setup, diagnostics, and local simulation shell commands. |
+| `channels` | Defines zbus channels and shared message types. |
+| `state` | Owns the authoritative state machine and rental context. |
+| `button` | Reads the physical button through `sw0` and publishes button events. |
+| `led` | Observes bike state and drives the LED pattern through `led0`. |
 | `lte` | Initializes the nRF9160 modem, attaches to LTE, and exposes attach diagnostics. |
 | `mqtt_client` | Manages MQTT connectivity, subscribes to backend commands, and publishes telemetry/events. |
-| `telemetry` | Produces periodic telemetry samples, including state, uptime, LTE status, trip data, and best-effort GNSS. |
+| `sensor` | Provides optional MPU6050 motion samples when configured in devicetree. |
+| `telemetry` | Planned module for periodic telemetry samples, including state, uptime, LTE status, trip data, and best-effort GNSS. |
 
 ## Data Flow
 
@@ -59,7 +60,7 @@ The MVP uses four logical channels:
 | `bike_state` | `bike_state` | `led_status`, `telemetry`, `mqtt_client` | Publishes authoritative state changes. |
 | `telemetry_sample` | `telemetry` | `mqtt_client` | Publishes periodic telemetry samples. |
 
-Message contents are implemented as compact C structs in `app/include/app_channels.h`. The current channel scaffolding covers button events, backend commands, state publications, and telemetry samples; button/backend/state are actively used by implemented modules, `button_input` publishes button events, and `led_status` observes the state channel.
+Message contents are implemented as compact C structs in `app/include/channels.h`. The current channel scaffolding covers button events, backend commands, state publications, and telemetry samples; button/backend/state are actively used by implemented modules, `button` publishes button events, and `led` observes the state channel.
 
 ## State Machine
 

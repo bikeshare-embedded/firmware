@@ -35,7 +35,7 @@ int main(void)
 	led_status_init();
 	button_input_init();
 	bike_state_init();
-	// motion_sensor_init();
+	/* motion_sensor_init(); */
 
 	if (bike_config_is_valid(bike_config_get())) {
 		(void)bike_lte_connect();

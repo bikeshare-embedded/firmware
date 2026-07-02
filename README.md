@@ -58,6 +58,8 @@ Implemented now:
 - Initial ZTEST/Twister application for config validation, core state transitions, LED state-to-pattern mapping, LED cached-init behavior, button event publishing, and button debounce filtering.
 - NCS manifest pinned to `v2.7.0` for nRF9160 modem support.
 - Initial LTE modem module with attach/disconnect/status shell diagnostics on nRF9160.
+- Initial MQTT client module with connect/disconnect/status shell diagnostics and command-topic subscription scaffolding.
+- Initial MPU6050 motion sensor module, disabled unless a matching devicetree node and `CONFIG_SENSOR` are available.
 
 Main implementation gaps before the agreed MVP:
 
@@ -66,8 +68,7 @@ Main implementation gaps before the agreed MVP:
 - Validate LED GPIO behavior on nRF9160 DK hardware.
 - Validate physical button behavior on nRF9160 DK hardware.
 - Complete the `ERROR` fault path in the state machine.
-- Complete zbus users for telemetry and MQTT.
-- Add MQTT over the established LTE connection.
+- Complete MQTT command parsing and telemetry/event publishing over zbus.
 - Add best-effort GNSS telemetry.
 - Expand ZTEST/Twister suites for telemetry, timeout timing, and edge cases.
 
@@ -142,6 +143,9 @@ bike state
 bike lte status
 bike lte connect
 bike lte disconnect
+bike mqtt status
+bike mqtt connect
+bike mqtt disconnect
 ```
 
 For local demos, shell can inject simulated backend commands:
@@ -186,7 +190,7 @@ bikes/{bike_id}/commands
 
 ## Current Native Simulation Demo
 
-The current implementation can validate the configuration, state-machine flow, logical LED state mapping, and button event flow without LTE, MQTT, GNSS, or NVS:
+The current implementation can validate the configuration, state-machine flow, logical LED state mapping, button event flow, and transport diagnostics without GNSS or hardware NVS:
 
 ```text
 bike set id BIKE_001

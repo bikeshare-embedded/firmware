@@ -18,7 +18,7 @@ Therefore, instructor approval is required for LTE/4G to count as the communicat
 | Debug UART | Zephyr console, logging, and shell over the board debug UART. | Connect serial terminal and verify boot logs/shell. | Shell/logging config exists for current app. |
 | LED | Onboard LED through devicetree alias `led0`. | State changes produce documented LED patterns. | `led_status` observes bike state and drives/logically tracks patterns. Hardware validation still pending. |
 | Button | Onboard button through devicetree alias `sw0`. | Button starts trip from `RESERVED` and ends trip from `IN_USE`. | `button_input` publishes debounced zbus button events from `sw0`; hardware validation still pending. |
-| Communication interface | LTE/4G modem on nRF9160 DK with MQTT. | Device connects over LTE and exchanges MQTT messages with Mosquitto. | Initial LTE attach and diagnostics implemented; MQTT pending. Requires instructor approval for requirement compliance. |
+| Communication interface | LTE/4G modem on nRF9160 DK with MQTT. | Device connects over LTE and exchanges MQTT messages with Mosquitto. | Initial LTE attach and MQTT client diagnostics implemented. Command parsing and telemetry publishing remain pending. Requires instructor approval for requirement compliance. |
 | Optional GNSS | Best-effort GNSS telemetry on nRF9160. | Telemetry includes location when a fix is valid and no-fix status otherwise. | Not implemented yet. |
 
 ## Zephyr Subsystem Requirements
@@ -26,7 +26,7 @@ Therefore, instructor approval is required for LTE/4G to count as the communicat
 | Requirement | Target implementation | Verification | Current status |
 | --- | --- | --- | --- |
 | Logging | Zephyr Logging for boot, config, LTE/MQTT lifecycle, backend commands, state transitions, trips, telemetry publish results, warnings, and errors. | UART logs during demo and tests. | Basic logging and LTE lifecycle logging exist. Policy not fully implemented. |
-| Shell | Shell commands for setup, diagnostics, and simulated backend rental commands. | Run `bike set ...`, `bike get`, `bike state`, `bike lte status`, `bike sim authorize`, and `bike sim cancel`. | Config, state, LTE diagnostic, and simulation commands implemented. MQTT diagnostics pending. |
+| Shell | Shell commands for setup, diagnostics, and simulated backend rental commands. | Run `bike set ...`, `bike get`, `bike state`, `bike lte status`, `bike mqtt status`, `bike sim authorize`, and `bike sim cancel`. | Config, state, LTE/MQTT diagnostic, and simulation commands implemented. |
 | Settings | Zephyr Settings with NVS backend on hardware. | Configure settings, reboot, verify values persist. | Runtime Settings exists for development only. NVS pending. |
 | zbus | Channels: `button_event`, `backend_command`, `bike_state`, and `telemetry_sample`. | Unit tests and runtime logs show decoupled module communication. | Channel scaffolding exists; backend/button/state channels are used, `button_input` publishes button events, and `led_status` observes state. |
 | ZTEST | Unit tests for state, backend commands, LED mapping, button event flow, button debounce, config validation, and telemetry formatting. | Run Twister on `native_sim/native/64`. | Initial config, state, LED mapping, LED cached-init, button event, and debounce tests added. Telemetry tests pending. |
@@ -37,13 +37,13 @@ Therefore, instructor approval is required for LTE/4G to count as the communicat
 | Requirement | Target implementation | Verification | Current status |
 | --- | --- | --- | --- |
 | Bike identification | Persist `bike/id`. | `bike set id <id>`, reboot, `bike get`. | Existing `id` command exists. Persistence is runtime-only. |
-| Device token | Persist `bike/device_token`. | `bike set token <token>`, MQTT auth uses token. | Runtime setting and shell command implemented. MQTT use pending. |
-| MQTT broker host | Persist `bike/mqtt_host`. | `bike set mqtt_host <host>`, MQTT connects. | Runtime setting and shell command implemented. MQTT use pending. |
-| MQTT broker port | Persist `bike/mqtt_port`. | `bike set mqtt_port <port>`, validation rejects invalid ports. | Runtime setting, shell command, and validation implemented. MQTT use pending. |
+| Device token | Persist `bike/device_token`. | `bike set token <token>`, MQTT auth uses token. | Runtime setting and shell command implemented. MQTT token auth pending. |
+| MQTT broker host | Persist `bike/mqtt_host`. | `bike set mqtt_host <host>`, MQTT connects. | Runtime setting, shell command, validation, and MQTT connection use implemented. Hardware validation pending. |
+| MQTT broker port | Persist `bike/mqtt_port`. | `bike set mqtt_port <port>`, validation rejects invalid ports. | Runtime setting, shell command, validation, and MQTT connection use implemented. Hardware validation pending. |
 | LTE APN | Persist `bike/apn`. | `bike set apn <apn>`, modem configuration uses APN. | Runtime setting, shell command, and LTE PDN configuration implemented. |
 | Initial state | Missing/invalid config enters `UNREGISTERED`; valid config and successful initialization enters `AVAILABLE`; unrecoverable init failure enters `ERROR`. | State-machine tests and boot demo. | `UNREGISTERED`/`AVAILABLE` boot rule implemented. `ERROR` fault path pending. |
-| Rental authorization | `RENT_AUTHORIZE` from MQTT or `bike sim authorize <rental_id>` moves `AVAILABLE -> RESERVED`. | MQTT/demo shell flow. | Shell simulation path implemented. MQTT path pending. |
-| Rental cancellation | `RENT_CANCEL` from MQTT or `bike sim cancel` moves matching `RESERVED -> AVAILABLE`. | MQTT/demo shell flow. | Shell simulation path implemented. MQTT path pending. |
+| Rental authorization | `RENT_AUTHORIZE` from MQTT or `bike sim authorize <rental_id>` moves `AVAILABLE -> RESERVED`. | MQTT/demo shell flow. | Shell simulation path implemented. MQTT command parsing pending. |
+| Rental cancellation | `RENT_CANCEL` from MQTT or `bike sim cancel` moves matching `RESERVED -> AVAILABLE`. | MQTT/demo shell flow. | Shell simulation path implemented. MQTT command parsing pending. |
 | Reservation timeout | `RESERVED` returns to `AVAILABLE` after 60 seconds without button press. | ZTEST with controlled time or manual demo. | Implemented with delayed work; controlled-time test pending. |
 | Trip start | Button press in `RESERVED` moves to `IN_USE`. | Button demo and state test. | State transition and debounced `button_input` event publishing implemented; hardware validation pending. Shell can simulate button event. |
 | Trip end | Button press in `IN_USE` moves to `AVAILABLE`. | Button demo and state test. | State transition and debounced `button_input` event publishing implemented; hardware validation pending. Shell can simulate button event. |
@@ -67,12 +67,11 @@ Use Zephyr Logging levels consistently:
 The repository currently implements the early configuration, native-simulation, LED, and button skeleton. The following work remains before the documentation and firmware match:
 
 - Validate LTE attach on nRF9160 DK hardware with a real SIM/APN.
-- Add board-specific configuration for nRF9160 LTE, MQTT, GNSS, and NVS.
+- Validate board-specific nRF9160 LTE, MQTT, and NVS configuration on hardware.
 - Validate hardware persistence with NVS instead of runtime-only Settings.
 - Validate LED GPIO behavior on nRF9160 DK hardware.
 - Validate button GPIO behavior on nRF9160 DK hardware.
-- Complete zbus users for telemetry and MQTT.
-- Add MQTT client over LTE.
+- Complete MQTT command parsing and telemetry/event publishing over zbus.
 - Add best-effort GNSS telemetry.
 - Expand ZTEST/Twister tests for telemetry, timeout timing, and more backend edge cases.
 - Add the final demo flow.

@@ -33,7 +33,7 @@ Current recommended command for this workspace:
 west twister -p native_sim/native/64 -T bikeshare-firmware/tests
 ```
 
-The repository now has an initial `tests/` application for config validation, core state transitions, LED state-to-pattern mapping, LED cached-init behavior, button event publishing, and button debounce filtering. Additional suites are still planned for telemetry formatting and more backend edge cases.
+The repository now has an initial `tests/` application for config validation, core state transitions, LED state-to-pattern mapping, LED cached-init behavior, button event publishing, and button debounce filtering. Additional suites are still planned for telemetry formatting, transport diagnostics, and more backend edge cases.
 
 ## Planned ZTEST Suites
 
@@ -179,4 +179,4 @@ The demo is considered successful when:
 - GNSS fixes may be unavailable indoors or during short demos.
 - LTE registration depends on SIM, antenna, network coverage, and APN configuration.
 - Local Mosquitto must be reachable from the cellular network.
-- Current repository code implements the initial config/state/LED/button test application. Hardware validation and several planned suites are still pending.
+- Current repository code implements the initial config/state/LED/button test application plus LTE/MQTT diagnostics. Hardware validation and several planned suites are still pending.
