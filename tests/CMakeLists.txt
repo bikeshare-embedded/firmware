@@ -13,5 +13,6 @@ target_sources(app PRIVATE
 	../app/src/gnss.c
 	../app/src/led.c
 	../app/src/state.c
+	../app/src/mqtt_client.c
 	../app/src/telemetry.c
 )

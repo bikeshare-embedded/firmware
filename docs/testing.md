@@ -33,18 +33,19 @@ Current recommended command for this workspace:
 west twister -p native_sim/native/64 -T bikeshare-firmware/tests
 ```
 
-The repository has a `tests/` application for config validation, core state transitions, LED state-to-pattern mapping, LED cached-init behavior, button event publishing, button debounce filtering, telemetry sample formatting, and GNSS valid/no-fix cache transitions. Additional suites are still planned for timeout timing, transport diagnostics, and more backend edge cases.
+The repository now has an initial `tests/` application for config validation, core state transitions, LED state-to-pattern mapping, LED cached-init behavior, button event publishing, button debounce filtering, MQTT topic construction, MQTT command parsing, MQTT command status counters, and compact MQTT event formatting, telemetry sample formatting, and GNSS valid/no-fix cache transitions. Additional suites are still planned for timeout timing, transport diagnostics, and more backend edge cases.
 
 ## Planned ZTEST Suites
 
-| Suite | Purpose | Example checks |
-| --- | --- | --- |
-| `bike_state` | Validate all state-machine transitions. | Boot rules, `AVAILABLE -> RESERVED`, `RESERVED -> IN_USE`, `IN_USE -> AVAILABLE`, error handling. Initial coverage exists. |
-| `backend_command` | Validate backend command handling. | Accept `RENT_AUTHORIZE` only in `AVAILABLE`, accept matching `RENT_CANCEL` only in `RESERVED`, reject duplicates/mismatches. Initial direct state coverage exists. |
-| `led_status` | Validate state-to-pattern mapping. | `UNREGISTERED=off`, `AVAILABLE=slow blink`, `RESERVED=fast blink`, `IN_USE=solid on`, `ERROR=SOS/error`. Initial coverage exists. |
-| `button_input` | Validate button event publishing into the state machine. | Published button events move `RESERVED -> IN_USE` and `IN_USE -> AVAILABLE`; duplicate presses inside the debounce window are ignored. Initial coverage exists. |
-| `bike_config` | Validate configuration handling. | Required fields, non-empty strings, valid `mqtt_port` in `1..65535`, invalid config keeps bike `UNREGISTERED`. Initial coverage exists. |
-| `telemetry` | Validate telemetry formatting logic. | Includes bike ID, state, `uptime_ms`, GNSS fix/no-fix status, and clears coordinate fields when no fix is available. Initial coverage exists. |
+| Suite             | Purpose                                                  | Example checks                                                                                                                                                     |
+| ----------------- | -------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `bike_state`      | Validate all state-machine transitions.                  | Boot rules, `AVAILABLE -> RESERVED`, `RESERVED -> IN_USE`, `IN_USE -> AVAILABLE`, error handling. Initial coverage exists.                                         |
+| `backend_command` | Validate backend command handling.                       | Accept `RENT_AUTHORIZE` only in `AVAILABLE`, accept matching `RENT_CANCEL` only in `RESERVED`, reject duplicates/mismatches. Initial direct state coverage exists. |
+| `led_status`      | Validate state-to-pattern mapping.                       | `UNREGISTERED=off`, `AVAILABLE=slow blink`, `RESERVED=fast blink`, `IN_USE=solid on`, `ERROR=SOS/error`. Initial coverage exists.                                  |
+| `button_input`    | Validate button event publishing into the state machine. | Published button events move `RESERVED -> IN_USE` and `IN_USE -> AVAILABLE`; duplicate presses inside the debounce window are ignored. Initial coverage exists.    |
+| `bike_config`     | Validate configuration handling.                         | Required fields, non-empty strings, valid `mqtt_port` in `1..65535`, invalid config keeps bike `UNREGISTERED`. Initial coverage exists.                            |
+| `mqtt_client`     | Validate MQTT helper logic.                              | Topic construction, JSON command parsing, command status counters, and compact state/button event payload formatting. Initial coverage exists.                     |
+| `telemetry`       | Validate telemetry formatting logic.                     | Includes bike ID, state, `uptime_ms`, rental ID when active, trip duration, LTE status placeholder, GNSS fix/no-fix status.                                        |
 
 ## State-Machine Test Cases
 
@@ -123,6 +124,10 @@ bike set apn <sim-apn>
 bike get
 ```
 
+For production-like TLS validation, use port `8883` and provision the broker CA
+certificate into the nRF modem credential store at
+`CONFIG_BIKE_MQTT_TLS_SEC_TAG` before connecting.
+
 - Reboot and confirm values persist through NVS.
 - Confirm the bike leaves `UNREGISTERED` and enters `AVAILABLE` after valid configuration and initialization.
 - Confirm LTE network registration is logged.
@@ -143,7 +148,9 @@ bike sim authorize RENTAL_001
 - Press the board button and confirm state changes to `IN_USE` and LED becomes solid on.
 - Press the board button again and confirm state returns to `AVAILABLE` and LED slow-blinks.
 - Confirm MQTT event messages are published for reservation, trip start, and trip end.
-- Confirm telemetry messages are published periodically.
+- Confirm state messages are published on `bikes/BIKE_001/state`.
+- Confirm button events are published on `bikes/BIKE_001/events`.
+- Confirm telemetry messages are published periodically once the telemetry module is enabled.
 - Confirm GNSS reports either a valid fix or an explicit no-fix status.
 - Run `bike gnss` and confirm it reports supported/running/fix/last-error status without blocking the shell.
 - Run `bike sim authorize RENTAL_002` and do not press the button; confirm timeout returns the bike to `AVAILABLE` after 60 seconds.

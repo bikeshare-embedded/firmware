@@ -163,6 +163,7 @@ static int cmd_bike_lte_status(const struct shell *sh, size_t argc, char **argv)
 	shell_print(sh, "Initialized:      %s", status.initialized ? "yes" : "no");
 	shell_print(sh, "Connecting:       %s", status.connecting ? "yes" : "no");
 	shell_print(sh, "Connected:        %s", status.connected ? "yes" : "no");
+	shell_print(sh, "PDN active:       %s", status.pdn_active ? "yes" : "no");
 	shell_print(sh, "Registration:     %s",
 		    bike_lte_registration_name(status.registration));
 	shell_print(sh, "Mode:             %s", bike_lte_mode_name(status.mode));
@@ -275,6 +276,8 @@ static int cmd_bike_mqtt_status(const struct shell *sh, size_t argc, char **argv
 	shell_print(sh, "Connecting:       %s", status.connecting ? "yes" : "no");
 	shell_print(sh, "Connected:        %s", status.connected ? "yes" : "no");
 	shell_print(sh, "Subscribed:       %s", status.subscribed ? "yes" : "no");
+	shell_print(sh, "Enabled:          %s", status.enabled ? "yes" : "no");
+	shell_print(sh, "Secure transport: %s", status.secure ? "yes" : "no");
 	shell_print(sh, "Broker host:      %s", show_string(status.broker_host));
 	if (status.broker_port) {
 		shell_print(sh, "Broker port:      %u", status.broker_port);
@@ -282,9 +285,18 @@ static int cmd_bike_mqtt_status(const struct shell *sh, size_t argc, char **argv
 		shell_print(sh, "Broker port:      (unset)");
 	}
 	shell_print(sh, "Command topic:    %s", show_string(status.command_topic));
+	shell_print(sh, "State topic:      %s", show_string(status.state_topic));
 	shell_print(sh, "RX count:         %u", status.rx_count);
+	shell_print(sh, "Parse errors:     %u", status.parse_error_count);
+	shell_print(sh, "Publish count:    %u", status.publish_count);
+	shell_print(sh, "Publish errors:   %u", status.publish_error_count);
+	shell_print(sh, "Reconnect count:  %u", status.reconnect_count);
 	shell_print(sh, "Last error:       %d", status.last_error);
+	shell_print(sh, "Last reason:      %s",
+		    bike_mqtt_error_name(status.last_error));
 	shell_print(sh, "Disconnect reason:%d", status.disconnect_reason);
+	shell_print(sh, "Disconnect label: %s",
+		    bike_mqtt_error_name(status.disconnect_reason));
 	return 0;
 }
 
@@ -317,6 +329,24 @@ static int cmd_bike_mqtt_disconnect(const struct shell *sh, size_t argc, char **
 	}
 
 	shell_print(sh, "MQTT disconnected.");
+	return 0;
+}
+
+static int cmd_bike_mqtt_probe(const struct shell *sh, size_t argc, char **argv)
+{
+	int rc;
+
+	ARG_UNUSED(argc);
+	ARG_UNUSED(argv);
+
+	rc = bike_mqtt_tcp_probe();
+	if (rc) {
+		shell_error(sh, "MQTT TCP probe failed: %d (%s)", rc,
+			    bike_mqtt_error_name(rc));
+		return rc;
+	}
+
+	shell_print(sh, "MQTT TCP probe connected.");
 	return 0;
 }
 
@@ -421,6 +451,8 @@ SHELL_STATIC_SUBCMD_SET_CREATE(sub_bike_mqtt,
 	SHELL_CMD(connect, NULL, "Connect and subscribe to commands",
 		  cmd_bike_mqtt_connect),
 	SHELL_CMD(disconnect, NULL, "Disconnect MQTT", cmd_bike_mqtt_disconnect),
+	SHELL_CMD(probe, NULL, "Probe broker TCP reachability",
+		  cmd_bike_mqtt_probe),
 	SHELL_SUBCMD_SET_END
 );
 
