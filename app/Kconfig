@@ -28,6 +28,31 @@ config BIKE_MQTT_PAYLOAD_BUFFER_SIZE
 	help
 	  Maximum number of payload bytes copied before logging a command.
 
+config BIKE_MQTT_RECONNECT_INITIAL_MS
+	int "MQTT reconnect initial backoff in milliseconds"
+	default 5000
+	help
+	  First retry delay after an MQTT connection attempt or session fails.
+
+config BIKE_MQTT_RECONNECT_MAX_MS
+	int "MQTT reconnect maximum backoff in milliseconds"
+	default 300000
+	help
+	  Maximum retry delay while MQTT remains enabled.
+
+config BIKE_MQTT_SECURE_DEFAULT
+	bool "Use secure MQTT transport by default"
+	default y
+	help
+	  Prefer TLS MQTT for production broker connections. Port 1883 still
+	  forces insecure transport for public broker bring-up.
+
+config BIKE_MQTT_TLS_SEC_TAG
+	int "MQTT TLS security tag"
+	default 42
+	help
+	  nRF modem security tag containing the broker CA certificate.
+
 config BIKE_MQTT_THREAD_STACK_SIZE
 	int "MQTT worker thread stack size"
 	default 4096

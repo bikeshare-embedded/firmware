@@ -142,6 +142,7 @@ Topics:
 ```text
 bikes/{bike_id}/telemetry
 bikes/{bike_id}/events
+bikes/{bike_id}/state
 bikes/{bike_id}/commands
 ```
 
@@ -149,13 +150,17 @@ Topic intent:
 
 - `telemetry`: periodic status samples.
 - `events`: discrete trip/state events such as reservation, trip start, trip end, errors, and boot/online events.
+- `state`: compact publication of each authoritative bike state transition.
 - `commands`: backend-to-bike commands such as `RENT_AUTHORIZE` and `RENT_CANCEL`.
 
 Authentication:
 
 - MQTT client ID: `bike_id`.
+- MQTT username: `bike_id`.
 - MQTT password/token: `device_token`.
-- TLS is recommended for production but optional for the coursework demo unless certificate provisioning is implemented.
+- TLS is the production path on port `8883`, using the configured nRF modem
+  security tag for the broker CA certificate. Port `1883` remains available
+  as an insecure bring-up path for public demo brokers.
 
 ## Telemetry
 
