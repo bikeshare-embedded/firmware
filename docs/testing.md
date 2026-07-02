@@ -33,7 +33,7 @@ Current recommended command for this workspace:
 west twister -p native_sim/native/64 -T bikeshare-firmware/tests
 ```
 
-The repository now has an initial `tests/` application for config validation, core state transitions, LED state-to-pattern mapping, LED cached-init behavior, button event publishing,button debounce filtering, MQTT topic construction, MQTT command parsing, MQTT command status counters, and compact MQTT event formatting, telemetry sample formatting, and GNSS valid/no-fix cache transitions. Additional suites are still planned for timeout timing, transport diagnostics, and more backend edge cases.
+The repository now has an initial `tests/` application for config validation, core state transitions, LED state-to-pattern mapping, LED cached-init behavior, button event publishing, button debounce filtering, MQTT topic construction, MQTT command parsing, MQTT command status counters, and compact MQTT event formatting, telemetry sample formatting, and GNSS valid/no-fix cache transitions. Additional suites are still planned for timeout timing, transport diagnostics, and more backend edge cases.
 
 ## Planned ZTEST Suites
 
