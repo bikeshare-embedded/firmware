@@ -18,6 +18,7 @@
 #include "config.h"
 #include "led.h"
 #include "lte.h"
+#include "mqtt_client.h"
 #include "sensor.h"
 #include "state.h"
 
@@ -30,6 +31,7 @@ int main(void)
 	/* Initialize modules */
 	bike_config_init();
 	bike_lte_init();
+	bike_mqtt_init();
 	led_status_init();
 	button_input_init();
 	bike_state_init();

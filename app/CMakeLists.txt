@@ -16,6 +16,7 @@ target_sources(app PRIVATE
 	src/state.c
 	src/led.c
 	src/lte.c
+	src/mqtt_client.c
 	src/sensor.c
 )
 

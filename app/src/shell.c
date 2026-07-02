@@ -14,6 +14,7 @@
 #include "channels.h"
 #include "config.h"
 #include "lte.h"
+#include "mqtt_client.h"
 #include "state.h"
 
 static int refresh_state_after_config(const struct shell *sh)
@@ -203,6 +204,64 @@ static int cmd_bike_lte_disconnect(const struct shell *sh, size_t argc, char **a
 	return 0;
 }
 
+static int cmd_bike_mqtt_status(const struct shell *sh, size_t argc, char **argv)
+{
+	struct bike_mqtt_status status;
+
+	ARG_UNUSED(argc);
+	ARG_UNUSED(argv);
+
+	bike_mqtt_status_get(&status);
+	shell_print(sh, "MQTT supported:   %s", status.supported ? "yes" : "no");
+	shell_print(sh, "Initialized:      %s", status.initialized ? "yes" : "no");
+	shell_print(sh, "Connecting:       %s", status.connecting ? "yes" : "no");
+	shell_print(sh, "Connected:        %s", status.connected ? "yes" : "no");
+	shell_print(sh, "Subscribed:       %s", status.subscribed ? "yes" : "no");
+	shell_print(sh, "Broker host:      %s", show_string(status.broker_host));
+	if (status.broker_port) {
+		shell_print(sh, "Broker port:      %u", status.broker_port);
+	} else {
+		shell_print(sh, "Broker port:      (unset)");
+	}
+	shell_print(sh, "Command topic:    %s", show_string(status.command_topic));
+	shell_print(sh, "RX count:         %u", status.rx_count);
+	shell_print(sh, "Last error:       %d", status.last_error);
+	shell_print(sh, "Disconnect reason:%d", status.disconnect_reason);
+	return 0;
+}
+
+static int cmd_bike_mqtt_connect(const struct shell *sh, size_t argc, char **argv)
+{
+	ARG_UNUSED(argc);
+	ARG_UNUSED(argv);
+
+	int rc = bike_mqtt_connect();
+
+	if (rc) {
+		shell_error(sh, "Failed to start MQTT connect: %d", rc);
+		return rc;
+	}
+
+	shell_print(sh, "MQTT connect started.");
+	return 0;
+}
+
+static int cmd_bike_mqtt_disconnect(const struct shell *sh, size_t argc, char **argv)
+{
+	ARG_UNUSED(argc);
+	ARG_UNUSED(argv);
+
+	int rc = bike_mqtt_disconnect();
+
+	if (rc) {
+		shell_error(sh, "Failed to disconnect MQTT: %d", rc);
+		return rc;
+	}
+
+	shell_print(sh, "MQTT disconnected.");
+	return 0;
+}
+
 static int cmd_bike_sim_authorize(const struct shell *sh, size_t argc, char **argv)
 {
 	ARG_UNUSED(argc);
@@ -299,11 +358,20 @@ SHELL_STATIC_SUBCMD_SET_CREATE(sub_bike_lte,
 	SHELL_SUBCMD_SET_END
 );
 
+SHELL_STATIC_SUBCMD_SET_CREATE(sub_bike_mqtt,
+	SHELL_CMD(status, NULL, "Show MQTT client status", cmd_bike_mqtt_status),
+	SHELL_CMD(connect, NULL, "Connect and subscribe to commands",
+		  cmd_bike_mqtt_connect),
+	SHELL_CMD(disconnect, NULL, "Disconnect MQTT", cmd_bike_mqtt_disconnect),
+	SHELL_SUBCMD_SET_END
+);
+
 SHELL_STATIC_SUBCMD_SET_CREATE(sub_bike,
 	SHELL_CMD(set, &sub_bike_set, "Configure bike parameters", NULL),
 	SHELL_CMD(get, NULL, "Show current configuration", cmd_bike_get),
 	SHELL_CMD(state, NULL, "Show current state", cmd_bike_state),
 	SHELL_CMD(lte, &sub_bike_lte, "LTE modem diagnostics", NULL),
+	SHELL_CMD(mqtt, &sub_bike_mqtt, "MQTT client diagnostics", NULL),
 	SHELL_CMD(sim, &sub_bike_sim, "Simulate backend and button events", NULL),
 	SHELL_SUBCMD_SET_END
 );

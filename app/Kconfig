@@ -9,3 +9,33 @@ config APP_VERSION
 	default "0.0.0"
 	help
 	  Firmware version string reported at boot and used for telemetry.
+
+config BIKE_MQTT_RX_BUFFER_SIZE
+	int "MQTT RX buffer size"
+	default 512
+	help
+	  Receive buffer size used by the raw Zephyr MQTT client.
+
+config BIKE_MQTT_TX_BUFFER_SIZE
+	int "MQTT TX buffer size"
+	default 512
+	help
+	  Transmit buffer size used by the raw Zephyr MQTT client.
+
+config BIKE_MQTT_PAYLOAD_BUFFER_SIZE
+	int "MQTT command payload log buffer size"
+	default 256
+	help
+	  Maximum number of payload bytes copied before logging a command.
+
+config BIKE_MQTT_THREAD_STACK_SIZE
+	int "MQTT worker thread stack size"
+	default 4096
+	help
+	  Stack size for the MQTT socket poll and keepalive worker.
+
+config BIKE_MQTT_THREAD_PRIORITY
+	int "MQTT worker thread priority"
+	default 7
+	help
+	  Priority for the MQTT socket poll and keepalive worker.
