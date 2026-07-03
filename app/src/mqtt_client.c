@@ -22,6 +22,8 @@
 
 LOG_MODULE_REGISTER(bike_mqtt, LOG_LEVEL_INF);
 
+#define BIKE_MQTT_EVENT_PAYLOAD_MAX_LEN 256
+
 static struct bike_mqtt_status current_status = {
 #if defined(CONFIG_MQTT_LIB) && defined(CONFIG_NET_SOCKETS)
 	.supported = true,
@@ -275,7 +277,7 @@ int bike_mqtt_handle_command_payload(char *payload, size_t payload_len)
 
 	reason = command_reject_reason(&msg);
 	if (reason != NULL) {
-		char rejected_payload[192];
+		char rejected_payload[BIKE_MQTT_EVENT_PAYLOAD_MAX_LEN];
 
 		LOG_WRN("Rejected MQTT command %s: %s",
 			backend_command_name(msg.type), reason);
@@ -693,7 +695,7 @@ static int publish_telemetry_msg(const struct telemetry_sample_msg *msg)
 
 static int publish_state_event_msg(const struct bike_state_msg *msg)
 {
-	char payload[192];
+	char payload[BIKE_MQTT_EVENT_PAYLOAD_MAX_LEN];
 	int rc;
 
 	if (msg->event == BIKE_STATE_EVENT_NONE) {

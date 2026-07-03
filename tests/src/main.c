@@ -1,4 +1,5 @@
 #include <errno.h>
+#include <stdio.h>
 #include <string.h>
 
 #include <zephyr/ztest.h>
@@ -200,6 +201,36 @@ ZTEST(mqtt_client, test_command_parsing)
 					     &msg) < 0);
 }
 
+ZTEST(mqtt_client, test_command_parsing_bounds_rental_id)
+{
+	struct bike_backend_command_msg msg;
+	char max_rental_id[BIKE_RENTAL_ID_MAX_LEN];
+	char too_long_rental_id[BIKE_RENTAL_ID_MAX_LEN + 1];
+	char max_payload[128];
+	char too_long_payload[128];
+
+	memset(max_rental_id, 'R', sizeof(max_rental_id) - 1);
+	max_rental_id[sizeof(max_rental_id) - 1] = '\0';
+	memset(too_long_rental_id, 'R', sizeof(too_long_rental_id) - 1);
+	too_long_rental_id[sizeof(too_long_rental_id) - 1] = '\0';
+
+	snprintf(max_payload, sizeof(max_payload),
+		 "{\"protocolVersion\":1,\"type\":\"rent_authorize\","
+		 "\"rental_id\":\"%s\"}",
+		 max_rental_id);
+	snprintf(too_long_payload, sizeof(too_long_payload),
+		 "{\"protocolVersion\":1,\"type\":\"rent_authorize\","
+		 "\"rental_id\":\"%s\"}",
+		 too_long_rental_id);
+
+	zassert_ok(bike_mqtt_parse_command(max_payload, strlen(max_payload),
+					   &msg));
+	zassert_equal(strcmp(msg.rental_id, max_rental_id), 0);
+	zassert_equal(bike_mqtt_parse_command(too_long_payload,
+					      strlen(too_long_payload), &msg),
+		      -ENAMETOOLONG);
+}
+
 ZTEST(mqtt_client, test_command_handler_publishes_and_counts_errors)
 {
 	struct bike_backend_command_msg msg;
@@ -332,6 +363,36 @@ ZTEST(mqtt_client, test_command_rejected_json_formatting)
 			     "\"event\":\"command_rejected\",\"status\":\"IN_USE\","
 			     "\"rideId\":\"ride-id\",\"command\":\"rent_authorize\","
 			     "\"reason\":\"not_available\"}"), 0);
+}
+
+ZTEST(mqtt_client, test_command_rejected_json_formats_maximum_fields)
+{
+	char bike_id[BIKE_ID_MAX_LEN];
+	char rental_id[BIKE_RENTAL_ID_MAX_LEN];
+	char payload[256];
+
+	memset(bike_id, 'B', sizeof(bike_id) - 1);
+	bike_id[sizeof(bike_id) - 1] = '\0';
+	memset(rental_id, 'R', sizeof(rental_id) - 1);
+	rental_id[sizeof(rental_id) - 1] = '\0';
+
+	zassert_ok(bike_config_init());
+	zassert_ok(bike_config_set_id(bike_id));
+	zassert_ok(bike_config_set_device_token("TOKEN"));
+	zassert_ok(bike_config_set_mqtt_host("broker.example.com"));
+	zassert_ok(bike_config_set_mqtt_port(1883));
+	zassert_ok(bike_config_set_apn("internet"));
+	zassert_ok(bike_state_init());
+	zassert_ok(bike_state_authorize(rental_id));
+	zassert_ok(bike_state_button_press());
+
+	zassert_equal(bike_mqtt_format_command_rejected_json(
+			      "rent_authorize", "no_active_reservation",
+			      payload, 192),
+		      -ENAMETOOLONG);
+	zassert_true(bike_mqtt_format_command_rejected_json(
+			     "rent_authorize", "no_active_reservation",
+			     payload, sizeof(payload)) > 0);
 }
 
 ZTEST(mqtt_client, test_error_names)
