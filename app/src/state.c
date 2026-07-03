@@ -22,10 +22,11 @@ static char active_rental_id[BIKE_RENTAL_ID_MAX_LEN];
 static int64_t trip_started_at_ms;
 static struct k_work_delayable reservation_timeout_work;
 
-static void publish_state(void)
+static void publish_state_event(enum bike_state_event event)
 {
 	struct bike_state_msg msg = {
 		.state = current_state,
+		.event = event,
 		.updated_at_ms = k_uptime_get(),
 	};
 
@@ -53,17 +54,23 @@ const char *bike_state_name(enum bike_state_value state)
 	}
 }
 
-static void set_state(enum bike_state_value next_state)
+static void set_state_event(enum bike_state_value next_state,
+			    enum bike_state_event event)
 {
 	if (current_state == next_state) {
-		publish_state();
+		publish_state_event(event);
 		return;
 	}
 
 	LOG_INF("State: %s -> %s", bike_state_name(current_state),
 		bike_state_name(next_state));
 	current_state = next_state;
-	publish_state();
+	publish_state_event(event);
+}
+
+static void set_state(enum bike_state_value next_state)
+{
+	set_state_event(next_state, BIKE_STATE_EVENT_NONE);
 }
 
 static void clear_rental(void)
@@ -100,8 +107,8 @@ static void reservation_timeout_handler(struct k_work *work)
 	}
 
 	LOG_WRN("Reservation %s expired", active_rental_id);
+	set_state_event(BIKE_STATE_AVAILABLE, BIKE_STATE_EVENT_RESERVATION_EXPIRED);
 	clear_rental();
-	set_state(BIKE_STATE_AVAILABLE);
 }
 
 int bike_state_init(void)
@@ -110,7 +117,9 @@ int bike_state_init(void)
 			      reservation_timeout_handler);
 	current_state = bike_state_is_config_valid() ? BIKE_STATE_AVAILABLE :
 			BIKE_STATE_UNREGISTERED;
-	publish_state();
+	publish_state_event(current_state == BIKE_STATE_AVAILABLE ?
+			    BIKE_STATE_EVENT_BICYCLE_ONLINE :
+			    BIKE_STATE_EVENT_NONE);
 	LOG_INF("Initial state: %s", bike_state_name(current_state));
 	return 0;
 }
@@ -179,13 +188,13 @@ int bike_state_button_press(void)
 	case BIKE_STATE_RESERVED:
 		(void)k_work_cancel_delayable(&reservation_timeout_work);
 		trip_started_at_ms = k_uptime_get();
-		set_state(BIKE_STATE_IN_USE);
+		set_state_event(BIKE_STATE_IN_USE, BIKE_STATE_EVENT_RIDE_STARTED);
 		return 0;
 	case BIKE_STATE_IN_USE:
 		LOG_INF("Trip finished after %lld ms",
 			k_uptime_get() - trip_started_at_ms);
+		set_state_event(BIKE_STATE_AVAILABLE, BIKE_STATE_EVENT_RIDE_ENDED);
 		clear_rental();
-		set_state(BIKE_STATE_AVAILABLE);
 		return 0;
 	default:
 		LOG_WRN("Button ignored in state %s",

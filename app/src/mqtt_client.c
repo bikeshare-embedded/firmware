@@ -22,6 +22,8 @@
 
 LOG_MODULE_REGISTER(bike_mqtt, LOG_LEVEL_INF);
 
+#define BIKE_MQTT_EVENT_PAYLOAD_MAX_LEN 256
+
 static struct bike_mqtt_status current_status = {
 #if defined(CONFIG_MQTT_LIB) && defined(CONFIG_NET_SOCKETS)
 	.supported = true,
@@ -40,6 +42,11 @@ enum mqtt_status_error {
 	MQTT_STATUS_ERR_PUBLISH = -1004,
 	MQTT_STATUS_ERR_CONNECT = -1005,
 };
+
+#if defined(CONFIG_MQTT_LIB) && defined(CONFIG_NET_SOCKETS)
+static char event_topic[BIKE_MQTT_TOPIC_MAX_LEN];
+static int publish_payload(const char *topic, const char *payload);
+#endif
 
 static void status_copy(struct bike_mqtt_status *status)
 {
@@ -129,7 +136,24 @@ int bike_mqtt_build_command_topic(const char *bike_id, char *topic,
 	return 0;
 }
 
-int bike_mqtt_build_state_topic(const char *bike_id, char *topic,
+int bike_mqtt_build_telemetry_topic(const char *bike_id, char *topic,
+				    size_t topic_len)
+{
+	int len;
+
+	if (!bike_id || !bike_id[0] || !topic || topic_len == 0) {
+		return -EINVAL;
+	}
+
+	len = snprintk(topic, topic_len, "bikes/%s/telemetry", bike_id);
+	if (len < 0 || len >= topic_len) {
+		return -ENAMETOOLONG;
+	}
+
+	return 0;
+}
+
+int bike_mqtt_build_event_topic(const char *bike_id, char *topic,
 				size_t topic_len)
 {
 	int len;
@@ -138,7 +162,7 @@ int bike_mqtt_build_state_topic(const char *bike_id, char *topic,
 		return -EINVAL;
 	}
 
-	len = snprintk(topic, topic_len, "bikes/%s/state", bike_id);
+	len = snprintk(topic, topic_len, "bikes/%s/events", bike_id);
 	if (len < 0 || len >= topic_len) {
 		return -ENAMETOOLONG;
 	}
@@ -150,10 +174,14 @@ int bike_mqtt_parse_command(char *payload, size_t payload_len,
 			    struct bike_backend_command_msg *msg)
 {
 	struct command_payload {
+		int protocol_version;
 		const char *type;
 		const char *rental_id;
 	} decoded = { 0 };
 	static const struct json_obj_descr command_descr[] = {
+		JSON_OBJ_DESCR_PRIM_NAMED(struct command_payload,
+					  "protocolVersion",
+					  protocol_version, JSON_TOK_NUMBER),
 		JSON_OBJ_DESCR_PRIM(struct command_payload, type,
 				    JSON_TOK_STRING),
 		JSON_OBJ_DESCR_PRIM(struct command_payload, rental_id,
@@ -176,6 +204,10 @@ int bike_mqtt_parse_command(char *payload, size_t payload_len,
 		return ret;
 	}
 
+	if (decoded.protocol_version != 1) {
+		return -EPROTONOSUPPORT;
+	}
+
 	if (!decoded.type || !decoded.rental_id || !decoded.rental_id[0]) {
 		return -EINVAL;
 	}
@@ -196,9 +228,44 @@ int bike_mqtt_parse_command(char *payload, size_t payload_len,
 	return 0;
 }
 
+static const char *backend_command_name(enum bike_backend_command_type type)
+{
+	switch (type) {
+	case BIKE_BACKEND_RENT_AUTHORIZE:
+		return "rent_authorize";
+	case BIKE_BACKEND_RENT_CANCEL:
+		return "rent_cancel";
+	default:
+		return "unknown";
+	}
+}
+
+static const char *command_reject_reason(const struct bike_backend_command_msg *msg)
+{
+	const char *active_rental_id = bike_state_get_rental_id();
+	enum bike_state_value state = bike_state_get();
+
+	if (msg->type == BIKE_BACKEND_RENT_AUTHORIZE) {
+		return state == BIKE_STATE_AVAILABLE ? NULL : "not_available";
+	}
+
+	if (msg->type == BIKE_BACKEND_RENT_CANCEL) {
+		if (state != BIKE_STATE_RESERVED) {
+			return "no_active_reservation";
+		}
+		if (msg->rental_id[0] &&
+		    strcmp(msg->rental_id, active_rental_id) != 0) {
+			return "ride_id_mismatch";
+		}
+	}
+
+	return NULL;
+}
+
 int bike_mqtt_handle_command_payload(char *payload, size_t payload_len)
 {
 	struct bike_backend_command_msg msg;
+	const char *reason;
 	int rc;
 
 	rc = bike_mqtt_parse_command(payload, payload_len, &msg);
@@ -206,6 +273,24 @@ int bike_mqtt_handle_command_payload(char *payload, size_t payload_len)
 		LOG_WRN("Rejected MQTT command payload: %d", rc);
 		status_count_parse_error(MQTT_STATUS_ERR_PARSE);
 		return rc;
+	}
+
+	reason = command_reject_reason(&msg);
+	if (reason != NULL) {
+		char rejected_payload[BIKE_MQTT_EVENT_PAYLOAD_MAX_LEN];
+
+		LOG_WRN("Rejected MQTT command %s: %s",
+			backend_command_name(msg.type), reason);
+		status_count_parse_error(MQTT_STATUS_ERR_PARSE);
+		rc = bike_mqtt_format_command_rejected_json(
+			backend_command_name(msg.type), reason,
+			rejected_payload, sizeof(rejected_payload));
+		if (rc > 0) {
+#if defined(CONFIG_MQTT_LIB) && defined(CONFIG_NET_SOCKETS)
+			(void)publish_payload(event_topic, rejected_payload);
+#endif
+		}
+		return -EACCES;
 	}
 
 	/* Keep all rental behavior inside the state module's zbus listener. */
@@ -219,18 +304,170 @@ int bike_mqtt_handle_command_payload(char *payload, size_t payload_len)
 	return 0;
 }
 
-int bike_mqtt_format_state_json(const struct bike_state_msg *msg,
-				char *payload, size_t payload_len)
+static void format_scaled_decimal(char *buf, size_t buf_len, int32_t value,
+				  int32_t scale, int precision)
 {
+	int64_t magnitude = value;
+	const char *sign = "";
+
+	if (magnitude < 0) {
+		sign = "-";
+		magnitude = -magnitude;
+	}
+
+	snprintk(buf, buf_len, "%s%lld.%0*lld", sign, magnitude / scale,
+		 precision, magnitude % scale);
+}
+
+static void format_milli_decimal(char *buf, size_t buf_len, int32_t value)
+{
+	format_scaled_decimal(buf, buf_len, value, 1000, 3);
+}
+
+static void format_micro_decimal(char *buf, size_t buf_len, int32_t value)
+{
+	format_scaled_decimal(buf, buf_len, value, 1000000, 6);
+}
+
+static const char *nullable_ride_id(const char *rental_id,
+				    char *buf, size_t buf_len)
+{
+	if (rental_id == NULL || rental_id[0] == '\0') {
+		return "null";
+	}
+
+	snprintk(buf, buf_len, "\"%s\"", rental_id);
+	return buf;
+}
+
+int bike_mqtt_format_telemetry_json(const struct telemetry_sample_msg *sample,
+				    char *payload, size_t payload_len)
+{
+	char ride_id[BIKE_RENTAL_ID_MAX_LEN + 2];
+	char speed[18];
+	char latitude[20];
+	char longitude[20];
+	char altitude[18];
+	char accuracy[18];
+	char ax[18];
+	char ay[18];
+	char az[18];
+	char gx[18];
+	char gy[18];
+	char gz[18];
+	char temp[18];
+	const char *speed_json = "null";
+	const char *gnss_json = "\"gnss\":{\"valid\":false}";
+	const char *motion_json = "\"motion\":{\"valid\":false}";
+	char gnss_buf[160];
+	char motion_buf[320];
+	int len;
+
+	if (!sample || !payload || payload_len == 0) {
+		return -EINVAL;
+	}
+
+	if (sample->speed_valid) {
+		format_milli_decimal(speed, sizeof(speed), sample->speed_milli_m_s);
+		speed_json = speed;
+	}
+
+	if (sample->gnss_fix_valid) {
+		format_micro_decimal(latitude, sizeof(latitude),
+				     sample->gnss_latitude_microdegrees);
+		format_micro_decimal(longitude, sizeof(longitude),
+				     sample->gnss_longitude_microdegrees);
+		format_milli_decimal(altitude, sizeof(altitude),
+				     sample->gnss_altitude_mm);
+		format_milli_decimal(accuracy, sizeof(accuracy),
+				     (int32_t)sample->gnss_accuracy_mm);
+		len = snprintk(gnss_buf, sizeof(gnss_buf),
+			       "\"gnss\":{\"valid\":true,\"latitude\":%s,"
+			       "\"longitude\":%s,\"altitudeMeters\":%s,"
+			       "\"accuracyMeters\":%s}",
+			       latitude, longitude, altitude, accuracy);
+		if (len < 0 || len >= sizeof(gnss_buf)) {
+			return -ENAMETOOLONG;
+		}
+		gnss_json = gnss_buf;
+	}
+
+	if (sample->motion_valid) {
+		format_milli_decimal(ax, sizeof(ax), sample->motion_accel_milli_ms2[0]);
+		format_milli_decimal(ay, sizeof(ay), sample->motion_accel_milli_ms2[1]);
+		format_milli_decimal(az, sizeof(az), sample->motion_accel_milli_ms2[2]);
+		format_milli_decimal(gx, sizeof(gx), sample->motion_gyro_milli_rad_s[0]);
+		format_milli_decimal(gy, sizeof(gy), sample->motion_gyro_milli_rad_s[1]);
+		format_milli_decimal(gz, sizeof(gz), sample->motion_gyro_milli_rad_s[2]);
+		format_milli_decimal(temp, sizeof(temp), sample->motion_temp_milli_c);
+		len = snprintk(motion_buf, sizeof(motion_buf),
+			       "\"motion\":{\"valid\":true,\"moving\":%s,"
+			       "\"accelMetersPerSecondSquared\":{\"x\":%s,"
+			       "\"y\":%s,\"z\":%s},"
+			       "\"gyroRadiansPerSecond\":{\"x\":%s,\"y\":%s,"
+			       "\"z\":%s},\"temperatureCelsius\":%s}",
+			       sample->motion_moving ? "true" : "false",
+			       ax, ay, az, gx, gy, gz, temp);
+		if (len < 0 || len >= sizeof(motion_buf)) {
+			return -ENAMETOOLONG;
+		}
+		motion_json = motion_buf;
+	}
+
+	len = snprintk(payload, payload_len,
+		       "{\"protocolVersion\":1,\"bikeId\":\"%s\","
+		       "\"status\":\"%s\",\"uptimeMs\":%lld,\"rideId\":%s,"
+		       "\"speedMetersPerSecond\":%s,%s,%s}",
+		       sample->bike_id, bike_state_name(sample->state),
+		       sample->uptime_ms,
+		       nullable_ride_id(sample->rental_id, ride_id,
+					sizeof(ride_id)),
+		       speed_json, gnss_json, motion_json);
+	if (len < 0 || len >= payload_len) {
+		return -ENAMETOOLONG;
+	}
+
+	return len;
+}
+
+static const char *state_event_name(enum bike_state_event event)
+{
+	switch (event) {
+	case BIKE_STATE_EVENT_BICYCLE_ONLINE:
+		return "bicycle_online";
+	case BIKE_STATE_EVENT_RESERVATION_EXPIRED:
+		return "reservation_expired";
+	case BIKE_STATE_EVENT_RIDE_STARTED:
+		return "ride_started";
+	case BIKE_STATE_EVENT_RIDE_ENDED:
+		return "ride_ended";
+	default:
+		return NULL;
+	}
+}
+
+int bike_mqtt_format_state_event_json(const struct bike_state_msg *msg,
+				      char *payload, size_t payload_len)
+{
+	char ride_id[BIKE_RENTAL_ID_MAX_LEN + 2];
+	const char *event_name;
 	int len;
 
 	if (!msg || !payload || payload_len == 0) {
 		return -EINVAL;
 	}
 
+	event_name = state_event_name(msg->event);
+	if (event_name == NULL) {
+		return -EINVAL;
+	}
+
 	len = snprintk(payload, payload_len,
-		       "{\"state\":\"%s\",\"rental_id\":\"%s\",\"updated_at_ms\":%lld}",
-		       bike_state_name(msg->state), msg->rental_id,
+		       "{\"protocolVersion\":1,\"bikeId\":\"%s\","
+		       "\"event\":\"%s\",\"status\":\"%s\",\"rideId\":%s,"
+		       "\"uptimeMs\":%lld}",
+		       bike_config_get_id(), event_name, bike_state_name(msg->state),
+		       nullable_ride_id(msg->rental_id, ride_id, sizeof(ride_id)),
 		       msg->updated_at_ms);
 	if (len < 0 || len >= payload_len) {
 		return -ENAMETOOLONG;
@@ -239,18 +476,26 @@ int bike_mqtt_format_state_json(const struct bike_state_msg *msg,
 	return len;
 }
 
-int bike_mqtt_format_button_json(const struct bike_button_event_msg *msg,
-				 char *payload, size_t payload_len)
+int bike_mqtt_format_command_rejected_json(const char *command,
+					   const char *reason,
+					   char *payload,
+					   size_t payload_len)
 {
+	char ride_id[BIKE_RENTAL_ID_MAX_LEN + 2];
 	int len;
 
-	if (!msg || !payload || payload_len == 0) {
+	if (!command || !reason || !payload || payload_len == 0) {
 		return -EINVAL;
 	}
 
 	len = snprintk(payload, payload_len,
-		       "{\"type\":\"button_press\",\"uptime_ms\":%lld}",
-		       msg->uptime_ms);
+		       "{\"protocolVersion\":1,\"bikeId\":\"%s\","
+		       "\"event\":\"command_rejected\",\"status\":\"%s\","
+		       "\"rideId\":%s,\"command\":\"%s\",\"reason\":\"%s\"}",
+		       bike_config_get_id(), bike_state_name(bike_state_get()),
+		       nullable_ride_id(bike_state_get_rental_id(), ride_id,
+					sizeof(ride_id)),
+		       command, reason);
 	if (len < 0 || len >= payload_len) {
 		return -ENAMETOOLONG;
 	}
@@ -280,8 +525,7 @@ static char client_id[BIKE_ID_MAX_LEN];
 static struct mqtt_utf8 username;
 static struct mqtt_utf8 password;
 static char command_topic[BIKE_MQTT_TOPIC_MAX_LEN];
-static char state_topic[BIKE_MQTT_TOPIC_MAX_LEN];
-static char event_topic[BIKE_MQTT_TOPIC_MAX_LEN];
+static char telemetry_topic[BIKE_MQTT_TOPIC_MAX_LEN];
 static sec_tag_t tls_sec_tags[] = { CONFIG_BIKE_MQTT_TLS_SEC_TAG };
 
 static void status_count_publish_error(int error)
@@ -312,22 +556,6 @@ static bool status_session_active(void)
 	k_mutex_unlock(&status_lock);
 
 	return active;
-}
-
-static int build_button_topic(const char *bike_id, char *topic, size_t topic_len)
-{
-	int len;
-
-	if (!bike_id || !bike_id[0] || !topic || topic_len == 0) {
-		return -EINVAL;
-	}
-
-	len = snprintk(topic, topic_len, "bikes/%s/events", bike_id);
-	if (len < 0 || len >= topic_len) {
-		return -ENAMETOOLONG;
-	}
-
-	return 0;
 }
 
 static int resolve_broker(const char *host, uint16_t port,
@@ -451,26 +679,30 @@ static int publish_payload(const char *topic, const char *payload)
 	return 0;
 }
 
-static int publish_state_msg(const struct bike_state_msg *msg)
+static int publish_telemetry_msg(const struct telemetry_sample_msg *msg)
 {
-	char payload[160];
+	char payload[640];
 	int rc;
 
-	rc = bike_mqtt_format_state_json(msg, payload, sizeof(payload));
+	rc = bike_mqtt_format_telemetry_json(msg, payload, sizeof(payload));
 	if (rc < 0) {
 		status_count_publish_error(rc);
 		return rc;
 	}
 
-	return publish_payload(state_topic, payload);
+	return publish_payload(telemetry_topic, payload);
 }
 
-static int publish_button_msg(const struct bike_button_event_msg *msg)
+static int publish_state_event_msg(const struct bike_state_msg *msg)
 {
-	char payload[96];
+	char payload[BIKE_MQTT_EVENT_PAYLOAD_MAX_LEN];
 	int rc;
 
-	rc = bike_mqtt_format_button_json(msg, payload, sizeof(payload));
+	if (msg->event == BIKE_STATE_EVENT_NONE) {
+		return 0;
+	}
+
+	rc = bike_mqtt_format_state_event_json(msg, payload, sizeof(payload));
 	if (rc < 0) {
 		status_count_publish_error(rc);
 		return rc;
@@ -684,13 +916,14 @@ static int start_session(void)
 		return rc;
 	}
 
-	rc = bike_mqtt_build_state_topic(id, state_topic, sizeof(state_topic));
+	rc = bike_mqtt_build_telemetry_topic(id, telemetry_topic,
+					     sizeof(telemetry_topic));
 	if (rc) {
 		status_set_error(rc);
 		return rc;
 	}
 
-	rc = build_button_topic(id, event_topic, sizeof(event_topic));
+	rc = bike_mqtt_build_event_topic(id, event_topic, sizeof(event_topic));
 	if (rc) {
 		status_set_error(rc);
 		return rc;
@@ -724,9 +957,12 @@ static int start_session(void)
 	strncpy(current_status.command_topic, command_topic,
 		sizeof(current_status.command_topic) - 1);
 	current_status.command_topic[sizeof(current_status.command_topic) - 1] = '\0';
-	strncpy(current_status.state_topic, state_topic,
-		sizeof(current_status.state_topic) - 1);
-	current_status.state_topic[sizeof(current_status.state_topic) - 1] = '\0';
+	strncpy(current_status.telemetry_topic, telemetry_topic,
+		sizeof(current_status.telemetry_topic) - 1);
+	current_status.telemetry_topic[sizeof(current_status.telemetry_topic) - 1] = '\0';
+	strncpy(current_status.event_topic, event_topic,
+		sizeof(current_status.event_topic) - 1);
+	current_status.event_topic[sizeof(current_status.event_topic) - 1] = '\0';
 	k_mutex_unlock(&status_lock);
 
 	rc = mqtt_connect(&client_ctx);
@@ -997,21 +1233,21 @@ static void state_listener(const struct zbus_channel *chan)
 {
 	const struct bike_state_msg *msg = zbus_chan_const_msg(chan);
 
-	(void)publish_state_msg(msg);
+	(void)publish_state_event_msg(msg);
 }
 
-static void button_listener(const struct zbus_channel *chan)
+static void telemetry_listener(const struct zbus_channel *chan)
 {
-	const struct bike_button_event_msg *msg = zbus_chan_const_msg(chan);
+	const struct telemetry_sample_msg *msg = zbus_chan_const_msg(chan);
 
-	(void)publish_button_msg(msg);
+	(void)publish_telemetry_msg(msg);
 }
 
 ZBUS_LISTENER_DEFINE(mqtt_state_listener_node, state_listener);
 ZBUS_CHAN_ADD_OBS(bike_state_chan, mqtt_state_listener_node, 20);
 
-ZBUS_LISTENER_DEFINE(mqtt_button_listener_node, button_listener);
-ZBUS_CHAN_ADD_OBS(button_event_chan, mqtt_button_listener_node, 20);
+ZBUS_LISTENER_DEFINE(mqtt_telemetry_listener_node, telemetry_listener);
+ZBUS_CHAN_ADD_OBS(telemetry_sample_chan, mqtt_telemetry_listener_node, 20);
 
 #else
 

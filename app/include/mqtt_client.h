@@ -31,7 +31,8 @@ struct bike_mqtt_status {
 	char broker_host[BIKE_MQTT_HOST_MAX_LEN];
 	uint16_t broker_port;
 	char command_topic[BIKE_MQTT_TOPIC_MAX_LEN];
-	char state_topic[BIKE_MQTT_TOPIC_MAX_LEN];
+	char telemetry_topic[BIKE_MQTT_TOPIC_MAX_LEN];
+	char event_topic[BIKE_MQTT_TOPIC_MAX_LEN];
 	int last_error;
 	int disconnect_reason;
 	uint32_t rx_count;
@@ -122,7 +123,7 @@ int bike_mqtt_build_command_topic(const char *bike_id, char *topic,
 				  size_t topic_len);
 
 /**
- * @brief Build the state publication topic for a bike.
+ * @brief Build the telemetry publication topic for a bike.
  *
  * @param bike_id Configured bike identifier.
  * @param topic Destination buffer.
@@ -132,14 +133,29 @@ int bike_mqtt_build_command_topic(const char *bike_id, char *topic,
  * @retval -EINVAL if an argument is missing.
  * @retval -ENAMETOOLONG if @p topic is too small.
  */
-int bike_mqtt_build_state_topic(const char *bike_id, char *topic,
+int bike_mqtt_build_telemetry_topic(const char *bike_id, char *topic,
+				    size_t topic_len);
+
+/**
+ * @brief Build the event publication topic for a bike.
+ *
+ * @param bike_id Configured bike identifier.
+ * @param topic Destination buffer.
+ * @param topic_len Size of @p topic in bytes.
+ *
+ * @retval 0 on success.
+ * @retval -EINVAL if an argument is missing.
+ * @retval -ENAMETOOLONG if @p topic is too small.
+ */
+int bike_mqtt_build_event_topic(const char *bike_id, char *topic,
 				size_t topic_len);
 
 /**
  * @brief Decode a backend command JSON payload.
  *
- * Supported payloads are compact JSON objects with `type` set to
- * `rent_authorize` or `rent_cancel` and a non-empty `rental_id`.
+ * Supported payloads are compact JSON objects with `protocolVersion` set to
+ * 1, `type` set to `rent_authorize` or `rent_cancel`, and a non-empty
+ * `rental_id`.
  *
  * @param payload Mutable JSON buffer. Zephyr's JSON parser stores pointers
  *                into this buffer.
@@ -170,7 +186,21 @@ int bike_mqtt_parse_command(char *payload, size_t payload_len,
 int bike_mqtt_handle_command_payload(char *payload, size_t payload_len);
 
 /**
- * @brief Format a compact JSON state publication.
+ * @brief Format a compact JSON telemetry publication.
+ *
+ * @param sample Telemetry sample to encode.
+ * @param payload Destination buffer.
+ * @param payload_len Size of @p payload in bytes.
+ *
+ * @return Number of bytes written, excluding the terminator.
+ * @retval -EINVAL if an argument is missing.
+ * @retval -ENAMETOOLONG if @p payload is too small.
+ */
+int bike_mqtt_format_telemetry_json(const struct telemetry_sample_msg *sample,
+				    char *payload, size_t payload_len);
+
+/**
+ * @brief Format a compact JSON state event publication.
  *
  * @param msg State message to encode.
  * @param payload Destination buffer.
@@ -180,13 +210,14 @@ int bike_mqtt_handle_command_payload(char *payload, size_t payload_len);
  * @retval -EINVAL if an argument is missing.
  * @retval -ENAMETOOLONG if @p payload is too small.
  */
-int bike_mqtt_format_state_json(const struct bike_state_msg *msg,
-				char *payload, size_t payload_len);
+int bike_mqtt_format_state_event_json(const struct bike_state_msg *msg,
+				      char *payload, size_t payload_len);
 
 /**
- * @brief Format a compact JSON button event publication.
+ * @brief Format a compact JSON command rejection event.
  *
- * @param msg Button event to encode.
+ * @param command Rejected command type string.
+ * @param reason Protocol reason string.
  * @param payload Destination buffer.
  * @param payload_len Size of @p payload in bytes.
  *
@@ -194,5 +225,7 @@ int bike_mqtt_format_state_json(const struct bike_state_msg *msg,
  * @retval -EINVAL if an argument is missing.
  * @retval -ENAMETOOLONG if @p payload is too small.
  */
-int bike_mqtt_format_button_json(const struct bike_button_event_msg *msg,
-				 char *payload, size_t payload_len);
+int bike_mqtt_format_command_rejected_json(const char *command,
+					   const char *reason,
+					   char *payload,
+					   size_t payload_len);

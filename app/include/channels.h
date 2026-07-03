@@ -28,6 +28,15 @@ enum bike_backend_command_type {
 	BIKE_BACKEND_RENT_CANCEL,
 };
 
+/** State transition events that can be surfaced to the backend. */
+enum bike_state_event {
+	BIKE_STATE_EVENT_NONE,
+	BIKE_STATE_EVENT_BICYCLE_ONLINE,
+	BIKE_STATE_EVENT_RESERVATION_EXPIRED,
+	BIKE_STATE_EVENT_RIDE_STARTED,
+	BIKE_STATE_EVENT_RIDE_ENDED,
+};
+
 /** Message published on @ref button_event_chan for each button press. */
 struct bike_button_event_msg {
 	/** Timestamp of the press, in milliseconds since boot. */
@@ -46,6 +55,8 @@ struct bike_backend_command_msg {
 struct bike_state_msg {
 	/** New state value. */
 	enum bike_state_value state;
+	/** Backend-facing event associated with this transition, if any. */
+	enum bike_state_event event;
 	/** Rental ID associated with the state, empty if there is none. */
 	char rental_id[BIKE_RENTAL_ID_MAX_LEN];
 	/** Timestamp of the transition, in milliseconds since boot. */
@@ -58,8 +69,14 @@ struct telemetry_sample_msg {
 	char bike_id[BIKE_ID_MAX_LEN];
 	/** Bike state at the time of the sample. */
 	enum bike_state_value state;
+	/** Rental ID associated with the sample, empty if there is none. */
+	char rental_id[BIKE_RENTAL_ID_MAX_LEN];
 	/** Timestamp of the sample, in milliseconds since boot. */
 	int64_t uptime_ms;
+	/** True if speed is available. */
+	bool speed_valid;
+	/** Ground speed in milli-m/s when @ref speed_valid is true. */
+	int32_t speed_milli_m_s;
 	/** True if the GNSS fix backing this sample is valid. */
 	bool gnss_fix_valid;
 	/** Latitude in microdegrees when @ref gnss_fix_valid is true. */
@@ -70,6 +87,16 @@ struct telemetry_sample_msg {
 	int32_t gnss_altitude_mm;
 	/** Horizontal accuracy in millimeters when valid, or 0 if unknown. */
 	uint32_t gnss_accuracy_mm;
+	/** True if the motion sample backing this sample is valid. */
+	bool motion_valid;
+	/** True if the motion sample indicates the bike is moving. */
+	bool motion_moving;
+	/** Acceleration on each axis, in milli-m/s^2. */
+	int32_t motion_accel_milli_ms2[3];
+	/** Angular velocity on each axis, in milli-rad/s. */
+	int32_t motion_gyro_milli_rad_s[3];
+	/** Die temperature, in milli-degrees Celsius. */
+	int32_t motion_temp_milli_c;
 };
 
 /** Published on each debounced physical button press. */

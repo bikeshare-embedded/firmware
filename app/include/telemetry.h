@@ -15,6 +15,7 @@
 
 #include "channels.h"
 #include "gnss.h"
+#include "sensor.h"
 
 /** Initialize and start periodic telemetry publication. */
 void bike_telemetry_init(void);
@@ -28,5 +29,7 @@ void bike_telemetry_init(void);
 void bike_telemetry_fill_sample(struct telemetry_sample_msg *sample,
 				const char *bike_id,
 				enum bike_state_value state,
+				const char *rental_id,
 				int64_t uptime_ms,
-				const struct bike_gnss_fix *gnss);
+				const struct bike_gnss_fix *gnss,
+				const struct motion_sensor_sample *motion);
