@@ -102,7 +102,7 @@ static void store_no_fix(int error)
 
 static void store_valid_fix(const struct nrf_modem_gnss_pvt_data_frame *pvt)
 {
-	int32_t speed_cm_s = (int32_t)(pvt->speed * 100.0f);
+	int32_t speed_milli_m_s = (int32_t)(pvt->speed * 1000.0f);
 	struct bike_gnss_fix fix = {
 		.supported = true,
 		.running = true,
@@ -112,14 +112,15 @@ static void store_valid_fix(const struct nrf_modem_gnss_pvt_data_frame *pvt)
 		.longitude_microdegrees = degrees_to_microdegrees(pvt->longitude),
 		.altitude_mm = meters_to_millimeters(pvt->altitude),
 		.accuracy_mm = (uint32_t)meters_to_millimeters(pvt->accuracy),
+		.speed_milli_m_s = speed_milli_m_s,
 		.satellites_used = count_satellites_used(pvt),
 		.last_error = 0,
 	};
 
 	bike_gnss_store_fix(&fix);
 	LOG_INF("GNSS fix updated: lat=%d lon=%d speed=%d.%02d m/s",
-		fix.latitude_microdegrees, fix.longitude_microdegrees, speed_cm_s / 100,
-		speed_cm_s % 100);
+		fix.latitude_microdegrees, fix.longitude_microdegrees,
+		speed_milli_m_s / 1000, (speed_milli_m_s % 1000) / 10);
 }
 
 static void read_and_store_pvt(bool require_fix)

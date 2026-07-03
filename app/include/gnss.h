@@ -32,6 +32,8 @@ struct bike_gnss_fix {
 	int32_t altitude_mm;
 	/** Horizontal accuracy in millimeters when valid, or 0 if unknown. */
 	uint32_t accuracy_mm;
+	/** Ground speed in milli-m/s when valid. */
+	int32_t speed_milli_m_s;
 	/** Number of satellites used in the latest valid fix. */
 	uint8_t satellites_used;
 	/** Last GNSS API error, or 0 when the latest operation succeeded. */

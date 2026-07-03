@@ -285,7 +285,9 @@ static int cmd_bike_mqtt_status(const struct shell *sh, size_t argc, char **argv
 		shell_print(sh, "Broker port:      (unset)");
 	}
 	shell_print(sh, "Command topic:    %s", show_string(status.command_topic));
-	shell_print(sh, "State topic:      %s", show_string(status.state_topic));
+	shell_print(sh, "Telemetry topic:  %s",
+		    show_string(status.telemetry_topic));
+	shell_print(sh, "Event topic:      %s", show_string(status.event_topic));
 	shell_print(sh, "RX count:         %u", status.rx_count);
 	shell_print(sh, "Parse errors:     %u", status.parse_error_count);
 	shell_print(sh, "Publish count:    %u", status.publish_count);

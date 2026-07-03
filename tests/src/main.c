@@ -152,23 +152,33 @@ ZTEST(mqtt_client, test_topic_construction)
 						 sizeof(topic)));
 	zassert_equal(strcmp(topic, "bikes/BIKE_001/commands"), 0);
 
-	zassert_ok(bike_mqtt_build_state_topic("BIKE_001", topic,
+	zassert_ok(bike_mqtt_build_telemetry_topic("BIKE_001", topic,
+						   sizeof(topic)));
+	zassert_equal(strcmp(topic, "bikes/BIKE_001/telemetry"), 0);
+
+	zassert_ok(bike_mqtt_build_event_topic("BIKE_001", topic,
 					       sizeof(topic)));
-	zassert_equal(strcmp(topic, "bikes/BIKE_001/state"), 0);
+	zassert_equal(strcmp(topic, "bikes/BIKE_001/events"), 0);
 
 	zassert_equal(bike_mqtt_build_command_topic("", topic, sizeof(topic)),
 		      -EINVAL);
-	zassert_equal(bike_mqtt_build_state_topic("BIKE_001", topic, 8),
+	zassert_equal(bike_mqtt_build_telemetry_topic("BIKE_001", topic, 8),
 		      -ENAMETOOLONG);
 }
 
 ZTEST(mqtt_client, test_command_parsing)
 {
 	struct bike_backend_command_msg msg;
-	char authorize[] = "{\"type\":\"rent_authorize\",\"rental_id\":\"R1\"}";
-	char cancel[] = "{\"type\":\"rent_cancel\",\"rental_id\":\"R2\"}";
-	char unknown[] = "{\"type\":\"lock\",\"rental_id\":\"R3\"}";
-	char malformed[] = "{\"type\":\"rent_authorize\"";
+	char authorize[] = "{\"protocolVersion\":1,\"type\":\"rent_authorize\","
+			   "\"rental_id\":\"R1\"}";
+	char cancel[] = "{\"protocolVersion\":1,\"type\":\"rent_cancel\","
+			"\"rental_id\":\"R2\"}";
+	char unknown[] = "{\"protocolVersion\":1,\"type\":\"lock\","
+			 "\"rental_id\":\"R3\"}";
+	char missing_version[] = "{\"type\":\"rent_authorize\",\"rental_id\":\"R4\"}";
+	char wrong_version[] = "{\"protocolVersion\":2,\"type\":\"rent_authorize\","
+			       "\"rental_id\":\"R5\"}";
+	char malformed[] = "{\"protocolVersion\":1,\"type\":\"rent_authorize\"";
 
 	zassert_ok(bike_mqtt_parse_command(authorize, strlen(authorize), &msg));
 	zassert_equal(msg.type, BIKE_BACKEND_RENT_AUTHORIZE);
@@ -180,6 +190,12 @@ ZTEST(mqtt_client, test_command_parsing)
 
 	zassert_equal(bike_mqtt_parse_command(unknown, strlen(unknown), &msg),
 		      -ENOTSUP);
+	zassert_equal(bike_mqtt_parse_command(missing_version,
+					      strlen(missing_version), &msg),
+		      -EPROTONOSUPPORT);
+	zassert_equal(bike_mqtt_parse_command(wrong_version,
+					      strlen(wrong_version), &msg),
+		      -EPROTONOSUPPORT);
 	zassert_true(bike_mqtt_parse_command(malformed, strlen(malformed),
 					     &msg) < 0);
 }
@@ -189,15 +205,25 @@ ZTEST(mqtt_client, test_command_handler_publishes_and_counts_errors)
 	struct bike_backend_command_msg msg;
 	struct bike_mqtt_status before;
 	struct bike_mqtt_status after;
-	char authorize[] = "{\"type\":\"rent_authorize\",\"rental_id\":\"R9\"}";
-	char unknown[] = "{\"type\":\"bad\",\"rental_id\":\"R9\"}";
+	char authorize[] = "{\"protocolVersion\":1,\"type\":\"rent_authorize\","
+			   "\"rental_id\":\"R9\"}";
+	char unknown[] = "{\"protocolVersion\":1,\"type\":\"bad\","
+			 "\"rental_id\":\"R9\"}";
 
+	zassert_ok(bike_config_init());
+	zassert_ok(bike_config_set_id("BIKE_001"));
+	zassert_ok(bike_config_set_device_token("TOKEN"));
+	zassert_ok(bike_config_set_mqtt_host("broker.example.com"));
+	zassert_ok(bike_config_set_mqtt_port(1883));
+	zassert_ok(bike_config_set_apn("internet"));
+	zassert_ok(bike_state_init());
 	bike_mqtt_status_get(&before);
 	zassert_ok(bike_mqtt_handle_command_payload(authorize,
 						    strlen(authorize)));
 	zassert_ok(zbus_chan_read(&backend_command_chan, &msg, K_MSEC(100)));
 	zassert_equal(msg.type, BIKE_BACKEND_RENT_AUTHORIZE);
 	zassert_equal(strcmp(msg.rental_id, "R9"), 0);
+	zassert_ok(bike_state_cancel("R9"));
 
 	zassert_equal(bike_mqtt_handle_command_payload(unknown,
 						       strlen(unknown)),
@@ -208,27 +234,104 @@ ZTEST(mqtt_client, test_command_handler_publishes_and_counts_errors)
 
 ZTEST(mqtt_client, test_telemetry_json_formatting)
 {
-	struct bike_state_msg state_msg = {
-		.state = BIKE_STATE_RESERVED,
+	struct telemetry_sample_msg sample = {
+		.bike_id = "BIKE_001",
+		.state = BIKE_STATE_IN_USE,
 		.rental_id = "R10",
-		.updated_at_ms = 1234,
+		.uptime_ms = 12345,
+		.speed_valid = true,
+		.speed_milli_m_s = 2345,
+		.gnss_fix_valid = true,
+		.gnss_latitude_microdegrees = -3456789,
+		.gnss_longitude_microdegrees = -38123456,
+		.gnss_altitude_mm = 12345,
+		.gnss_accuracy_mm = 6789,
+		.motion_valid = true,
+		.motion_moving = true,
+		.motion_accel_milli_ms2 = { 100, 0, 9800 },
+		.motion_gyro_milli_rad_s = { 0, 0, 10 },
+		.motion_temp_milli_c = 31500,
 	};
-	struct bike_button_event_msg button_msg = {
-		.uptime_ms = 5678,
+	char payload[640];
+
+	zassert_true(bike_mqtt_format_telemetry_json(&sample, payload,
+						     sizeof(payload)) > 0);
+	zassert_equal(strcmp(payload,
+			     "{\"protocolVersion\":1,\"bikeId\":\"BIKE_001\","
+			     "\"status\":\"IN_USE\",\"uptimeMs\":12345,"
+			     "\"rideId\":\"R10\",\"speedMetersPerSecond\":2.345,"
+			     "\"gnss\":{\"valid\":true,\"latitude\":-3.456789,"
+			     "\"longitude\":-38.123456,\"altitudeMeters\":12.345,"
+			     "\"accuracyMeters\":6.789},\"motion\":{\"valid\":true,"
+			     "\"moving\":true,\"accelMetersPerSecondSquared\":"
+			     "{\"x\":0.100,\"y\":0.000,\"z\":9.800},"
+			     "\"gyroRadiansPerSecond\":{\"x\":0.000,\"y\":0.000,"
+			     "\"z\":0.010},\"temperatureCelsius\":31.500}}"), 0);
+}
+
+ZTEST(mqtt_client, test_telemetry_json_formats_invalid_optional_data)
+{
+	struct telemetry_sample_msg sample = {
+		.bike_id = "BIKE_001",
+		.state = BIKE_STATE_AVAILABLE,
+		.uptime_ms = 12345,
 	};
-	char payload[160];
+	char payload[192];
 
-	zassert_true(bike_mqtt_format_state_json(&state_msg, payload,
-						 sizeof(payload)) > 0);
+	zassert_true(bike_mqtt_format_telemetry_json(&sample, payload,
+						     sizeof(payload)) > 0);
 	zassert_equal(strcmp(payload,
-			     "{\"state\":\"RESERVED\",\"rental_id\":\"R10\","
-			     "\"updated_at_ms\":1234}"), 0);
+			     "{\"protocolVersion\":1,\"bikeId\":\"BIKE_001\","
+			     "\"status\":\"AVAILABLE\",\"uptimeMs\":12345,"
+			     "\"rideId\":null,\"speedMetersPerSecond\":null,"
+			     "\"gnss\":{\"valid\":false},"
+			     "\"motion\":{\"valid\":false}}"), 0);
+}
 
-	zassert_true(bike_mqtt_format_button_json(&button_msg, payload,
-						  sizeof(payload)) > 0);
+ZTEST(mqtt_client, test_event_json_formatting)
+{
+	struct bike_state_msg event_msg = {
+		.state = BIKE_STATE_IN_USE,
+		.event = BIKE_STATE_EVENT_RIDE_STARTED,
+		.rental_id = "R10",
+		.updated_at_ms = 5678,
+	};
+	char payload[192];
+
+	zassert_ok(bike_config_init());
+	zassert_ok(bike_config_set_id("BIKE_001"));
+
+	zassert_true(bike_mqtt_format_state_event_json(&event_msg, payload,
+						       sizeof(payload)) > 0);
 	zassert_equal(strcmp(payload,
-			     "{\"type\":\"button_press\",\"uptime_ms\":5678}"),
-		      0);
+			     "{\"protocolVersion\":1,\"bikeId\":\"BIKE_001\","
+			     "\"event\":\"ride_started\",\"status\":\"IN_USE\","
+			     "\"rideId\":\"R10\",\"uptimeMs\":5678}"), 0);
+}
+
+ZTEST(mqtt_client, test_command_rejected_json_formatting)
+{
+	char payload[192];
+
+	zassert_ok(bike_config_init());
+	zassert_ok(bike_config_set_id("BIKE_001"));
+	zassert_ok(bike_config_set_device_token("TOKEN"));
+	zassert_ok(bike_config_set_mqtt_host("broker.example.com"));
+	zassert_ok(bike_config_set_mqtt_port(1883));
+	zassert_ok(bike_config_set_apn("internet"));
+	zassert_ok(bike_state_init());
+	zassert_ok(bike_state_authorize("ride-id"));
+	zassert_ok(bike_state_button_press());
+
+	zassert_true(bike_mqtt_format_command_rejected_json("rent_authorize",
+							    "not_available",
+							    payload,
+							    sizeof(payload)) > 0);
+	zassert_equal(strcmp(payload,
+			     "{\"protocolVersion\":1,\"bikeId\":\"BIKE_001\","
+			     "\"event\":\"command_rejected\",\"status\":\"IN_USE\","
+			     "\"rideId\":\"ride-id\",\"command\":\"rent_authorize\","
+			     "\"reason\":\"not_available\"}"), 0);
 }
 
 ZTEST(mqtt_client, test_error_names)
@@ -252,20 +355,36 @@ ZTEST(telemetry, test_sample_includes_valid_gnss_fix)
 		.longitude_microdegrees = -38123456,
 		.altitude_mm = 12345,
 		.accuracy_mm = 6789,
+		.speed_milli_m_s = 2345,
+	};
+	struct motion_sensor_sample motion = {
+		.valid = true,
+		.moving = true,
+		.accel_milli_ms2 = { 100, 0, 9800 },
+		.gyro_milli_rad_s = { 0, 0, 10 },
+		.die_temp_milli_c = 31500,
 	};
 	struct telemetry_sample_msg sample;
 
 	bike_telemetry_fill_sample(&sample, "BIKE_TST", BIKE_STATE_IN_USE,
-				   4567, &fix);
+				   "RIDE_TST", 4567, &fix, &motion);
 
 	zassert_equal(strcmp(sample.bike_id, "BIKE_TST"), 0);
 	zassert_equal(sample.state, BIKE_STATE_IN_USE);
+	zassert_equal(strcmp(sample.rental_id, "RIDE_TST"), 0);
 	zassert_equal(sample.uptime_ms, 4567);
+	zassert_true(sample.speed_valid);
+	zassert_equal(sample.speed_milli_m_s, 2345);
 	zassert_true(sample.gnss_fix_valid);
 	zassert_equal(sample.gnss_latitude_microdegrees, -3456789);
 	zassert_equal(sample.gnss_longitude_microdegrees, -38123456);
 	zassert_equal(sample.gnss_altitude_mm, 12345);
 	zassert_equal(sample.gnss_accuracy_mm, 6789);
+	zassert_true(sample.motion_valid);
+	zassert_true(sample.motion_moving);
+	zassert_equal(sample.motion_accel_milli_ms2[0], 100);
+	zassert_equal(sample.motion_gyro_milli_rad_s[2], 10);
+	zassert_equal(sample.motion_temp_milli_c, 31500);
 }
 
 ZTEST(telemetry, test_sample_reports_no_fix_explicitly)
@@ -283,16 +402,18 @@ ZTEST(telemetry, test_sample_reports_no_fix_explicitly)
 	struct telemetry_sample_msg sample;
 
 	bike_telemetry_fill_sample(&sample, "BIKE_TST", BIKE_STATE_AVAILABLE,
-				   4567, &fix);
+				   NULL, 4567, &fix, NULL);
 
 	zassert_equal(strcmp(sample.bike_id, "BIKE_TST"), 0);
 	zassert_equal(sample.state, BIKE_STATE_AVAILABLE);
 	zassert_equal(sample.uptime_ms, 4567);
+	zassert_false(sample.speed_valid);
 	zassert_false(sample.gnss_fix_valid);
 	zassert_equal(sample.gnss_latitude_microdegrees, 0);
 	zassert_equal(sample.gnss_longitude_microdegrees, 0);
 	zassert_equal(sample.gnss_altitude_mm, 0);
 	zassert_equal(sample.gnss_accuracy_mm, 0);
+	zassert_false(sample.motion_valid);
 }
 
 ZTEST(telemetry, test_gnss_cache_transitions_valid_to_no_fix)
@@ -305,6 +426,7 @@ ZTEST(telemetry, test_gnss_cache_transitions_valid_to_no_fix)
 		.latitude_microdegrees = 111,
 		.longitude_microdegrees = 222,
 		.altitude_mm = 333,
+		.speed_milli_m_s = 444,
 	};
 	struct bike_gnss_fix no_fix = {
 		.supported = true,
@@ -318,12 +440,14 @@ ZTEST(telemetry, test_gnss_cache_transitions_valid_to_no_fix)
 	bike_gnss_store_fix(&valid_fix);
 	zassert_true(bike_gnss_get_latest(&latest));
 	zassert_equal(latest.latitude_microdegrees, 111);
+	zassert_equal(latest.speed_milli_m_s, 444);
 
 	bike_gnss_store_fix(&no_fix);
 	zassert_false(bike_gnss_get_latest(&latest));
 	zassert_false(latest.valid);
 	zassert_equal(latest.uptime_ms, 200);
 	zassert_equal(latest.latitude_microdegrees, 0);
+	zassert_equal(latest.speed_milli_m_s, 0);
 }
 
 ZTEST_SUITE(bike_config, NULL, NULL, NULL, NULL, NULL);
