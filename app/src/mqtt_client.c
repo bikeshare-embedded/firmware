@@ -250,7 +250,7 @@ static const char *command_reject_reason(const struct bike_backend_command_msg *
 	}
 
 	if (msg->type == BIKE_BACKEND_RENT_CANCEL) {
-		if (state != BIKE_STATE_RESERVED) {
+		if (state != BIKE_STATE_RESERVED && state != BIKE_STATE_IN_USE) {
 			return "no_active_reservation";
 		}
 		if (msg->rental_id[0] &&

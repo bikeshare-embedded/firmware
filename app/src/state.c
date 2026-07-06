@@ -165,7 +165,7 @@ int bike_state_authorize(const char *rental_id)
 
 int bike_state_cancel(const char *rental_id)
 {
-	if (current_state != BIKE_STATE_RESERVED) {
+	if (current_state != BIKE_STATE_RESERVED && current_state != BIKE_STATE_IN_USE) {
 		LOG_WRN("RENT_CANCEL rejected in state %s",
 			bike_state_name(current_state));
 		return -EACCES;
