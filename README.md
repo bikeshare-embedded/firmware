@@ -77,6 +77,14 @@ From a fresh clone of the parent workspace fetch the west-managed dependencies o
 
 ```bash
 west update
+west zephyr-export
+west packages pip --install
+```
+
+Install Zephyr SDK
+
+```bash
+west sdk install
 ```
 
 ## Build
