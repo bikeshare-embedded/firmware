@@ -60,8 +60,13 @@ ZTEST(bike_state, test_core_state_transitions)
 
 	zassert_ok(bike_state_button_press());
 	zassert_equal(bike_state_get(), BIKE_STATE_IN_USE);
-	zassert_equal(bike_state_cancel("RENTAL_001"), -EACCES);
+	zassert_ok(bike_state_cancel("RENTAL_001"));
+	zassert_equal(bike_state_get(), BIKE_STATE_AVAILABLE);
+	zassert_equal(bike_state_get_rental_id()[0], '\0');
 
+	zassert_ok(bike_state_authorize("RENTAL_002"));
+	zassert_ok(bike_state_button_press());
+	zassert_equal(bike_state_get(), BIKE_STATE_IN_USE);
 	zassert_ok(bike_state_button_press());
 	zassert_equal(bike_state_get(), BIKE_STATE_AVAILABLE);
 	zassert_equal(bike_state_get_rental_id()[0], '\0');

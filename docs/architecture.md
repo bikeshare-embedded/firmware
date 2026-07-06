@@ -101,7 +101,7 @@ After settings are loaded:
 | `RESERVED` | Reservation timeout | 60 seconds elapsed without trip start | `AVAILABLE` | Clear `rental_id`, publish timeout/cancellation event. |
 | `RESERVED` | Duplicate or mismatched `RENT_AUTHORIZE` | Always | `RESERVED` | Warn and reject without state change. |
 | `IN_USE` | Button press | Always | `AVAILABLE` | Stop trip timer, publish trip-ended event, clear `rental_id`. |
-| `IN_USE` | `RENT_CANCEL` | Always | `IN_USE` | Warn and reject because active trips are ended locally by button in the MVP. |
+| `IN_USE` | `RENT_CANCEL` | `rental_id` matches active trip | `AVAILABLE` | Clear `rental_id`, cancel the active trip, and publish state change. |
 | `IN_USE` | MQTT disconnect | Always | `IN_USE` | Continue local trip state and reconnect in background. |
 | Any non-error state | Unrecoverable firmware fault | Fault detected | `ERROR` | Publish/log error and switch LED pattern. |
 | `ERROR` | Button press | Always | `ERROR` | Log ignored press. |
