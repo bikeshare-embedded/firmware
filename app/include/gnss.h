@@ -14,6 +14,11 @@
 #include <stdbool.h>
 #include <stdint.h>
 
+/* Single fallback shared by gnss.c and tests built without CONFIG_BIKE_GNSS. */
+#ifndef CONFIG_BIKE_GNSS_FIX_MAX_AGE_SECONDS
+#define CONFIG_BIKE_GNSS_FIX_MAX_AGE_SECONDS 60
+#endif
+
 /** Latest cached GNSS status and fix. */
 struct bike_gnss_fix {
 	/** True when the target includes modem GNSS support. */
@@ -22,6 +27,12 @@ struct bike_gnss_fix {
 	bool running;
 	/** True when latitude, longitude, and altitude contain a valid fix. */
 	bool valid;
+	/**
+	 * True when this is a previous fix retained because newer samples
+	 * have no fix; uptime_ms then dates the original fix, and running
+	 * and last_error do not reflect the receiver's current health.
+	 */
+	bool retained;
 	/** Timestamp of the cached status, in milliseconds since boot. */
 	int64_t uptime_ms;
 	/** Latitude in microdegrees when @ref valid is true. */

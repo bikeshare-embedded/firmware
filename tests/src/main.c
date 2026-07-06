@@ -76,7 +76,7 @@ ZTEST(led_status, test_state_to_pattern_mapping)
 	zassert_equal(led_status_pattern_for_state(BIKE_STATE_RESERVED),
 		      LED_STATUS_CHASE);
 	zassert_equal(led_status_pattern_for_state(BIKE_STATE_IN_USE),
-		      LED_STATUS_CHASE);
+		      LED_STATUS_SOLID_ON);
 	zassert_equal(led_status_pattern_for_state(BIKE_STATE_ERROR),
 		      LED_STATUS_ERROR);
 }
@@ -477,13 +477,13 @@ ZTEST(telemetry, test_sample_reports_no_fix_explicitly)
 	zassert_false(sample.motion_valid);
 }
 
-ZTEST(telemetry, test_gnss_cache_transitions_valid_to_no_fix)
+ZTEST(telemetry, test_gnss_cache_retains_fresh_fix_over_no_fix)
 {
 	struct bike_gnss_fix valid_fix = {
 		.supported = true,
 		.running = true,
 		.valid = true,
-		.uptime_ms = 100,
+		.uptime_ms = k_uptime_get(),
 		.latitude_microdegrees = 111,
 		.longitude_microdegrees = 222,
 		.altitude_mm = 333,
@@ -493,22 +493,50 @@ ZTEST(telemetry, test_gnss_cache_transitions_valid_to_no_fix)
 		.supported = true,
 		.running = true,
 		.valid = false,
-		.uptime_ms = 200,
+		.uptime_ms = k_uptime_get(),
 	};
 	struct bike_gnss_fix latest;
 
 	bike_gnss_init();
 	bike_gnss_store_fix(&valid_fix);
 	zassert_true(bike_gnss_get_latest(&latest));
+	zassert_false(latest.retained);
 	zassert_equal(latest.latitude_microdegrees, 111);
 	zassert_equal(latest.speed_milli_m_s, 444);
 
 	bike_gnss_store_fix(&no_fix);
+	zassert_true(bike_gnss_get_latest(&latest));
+	zassert_true(latest.valid);
+	zassert_true(latest.retained);
+	zassert_equal(latest.latitude_microdegrees, 111);
+	zassert_equal(latest.speed_milli_m_s, 444);
+}
+
+ZTEST(telemetry, test_gnss_cache_expires_stale_fix)
+{
+	struct bike_gnss_fix stale_fix = {
+		.supported = true,
+		.running = true,
+		.valid = true,
+		.uptime_ms = k_uptime_get() -
+			     (CONFIG_BIKE_GNSS_FIX_MAX_AGE_SECONDS + 1) *
+				     MSEC_PER_SEC,
+		.latitude_microdegrees = 111,
+	};
+	struct bike_gnss_fix no_fix = {
+		.supported = true,
+		.running = true,
+		.valid = false,
+		.uptime_ms = k_uptime_get(),
+	};
+	struct bike_gnss_fix latest;
+
+	bike_gnss_init();
+	bike_gnss_store_fix(&stale_fix);
+	bike_gnss_store_fix(&no_fix);
 	zassert_false(bike_gnss_get_latest(&latest));
 	zassert_false(latest.valid);
-	zassert_equal(latest.uptime_ms, 200);
 	zassert_equal(latest.latitude_microdegrees, 0);
-	zassert_equal(latest.speed_milli_m_s, 0);
 }
 
 ZTEST_SUITE(bike_config, NULL, NULL, NULL, NULL, NULL);

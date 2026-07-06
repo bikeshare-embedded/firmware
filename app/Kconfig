@@ -6,7 +6,7 @@ source "Kconfig.zephyr"
 
 config APP_VERSION
 	string "Application version"
-	default "0.3.0"
+	default "0.4.0"
 	help
 	  Firmware version string reported at boot and used for telemetry.
 
@@ -71,6 +71,17 @@ config BIKE_TELEMETRY_PERIOD_SECONDS
 	help
 	  Period used by the telemetry work item to publish samples on zbus.
 
+config BIKE_TELEMETRY_MAX_QUIET_SECONDS
+	int "Maximum time without publishing telemetry, in seconds"
+	default 0
+	help
+	  Telemetry publishes once per new GNSS fix and stays quiet in between
+	  so the LTE radio can idle and GNSS can re-acquire on shared-radio
+	  modems. This caps that quiet time: if no new fix arrives within this
+	  many seconds (e.g. indoors), a liveness sample is published anyway so
+	  the backend keeps hearing from the bike. Set to 0 to only publish on
+	  new fixes (no liveness sample).
+
 config BIKE_GNSS
 	bool "Enable best-effort GNSS sampling"
 	default n
@@ -79,6 +90,15 @@ config BIKE_GNSS
 	  Enable direct nRF modem GNSS sampling for nRF9160 targets. The module
 	  starts from background work and keeps reporting no-fix telemetry if GNSS
 	  cannot start or has not acquired a fix.
+
+config BIKE_GNSS_FIX_MAX_AGE_SECONDS
+	int "Maximum age of a retained GNSS fix, in seconds"
+	default 60
+	depends on BIKE_GNSS
+	help
+	  Keep reporting the last valid GNSS fix for up to this many seconds
+	  when newer samples have no fix, so brief LTE-induced GNSS outages do
+	  not flap telemetry between a position and none.
 
 config BIKE_GNSS_FIX_INTERVAL_SECONDS
 	int "GNSS fix interval in seconds"

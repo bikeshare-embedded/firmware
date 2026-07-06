@@ -13,7 +13,11 @@
 
 LOG_MODULE_REGISTER(bike_gnss, LOG_LEVEL_INF);
 
+#define GNSS_FIX_MAX_AGE_MS \
+	((int64_t)CONFIG_BIKE_GNSS_FIX_MAX_AGE_SECONDS * MSEC_PER_SEC)
+
 static struct bike_gnss_fix latest_fix;
+static struct bike_gnss_fix last_valid_fix;
 static struct k_mutex latest_lock;
 
 void bike_gnss_store_fix(const struct bike_gnss_fix *fix)
@@ -24,7 +28,16 @@ void bike_gnss_store_fix(const struct bike_gnss_fix *fix)
 
 	k_mutex_lock(&latest_lock, K_FOREVER);
 	latest_fix = *fix;
+	if (fix->valid) {
+		last_valid_fix = *fix;
+	}
 	k_mutex_unlock(&latest_lock);
+}
+
+static bool fix_is_fresh(const struct bike_gnss_fix *fix)
+{
+	return fix->valid &&
+	       (k_uptime_get() - fix->uptime_ms) < GNSS_FIX_MAX_AGE_MS;
 }
 
 bool bike_gnss_get_latest(struct bike_gnss_fix *fix)
@@ -33,8 +46,18 @@ bool bike_gnss_get_latest(struct bike_gnss_fix *fix)
 		return false;
 	}
 
+	/*
+	 * LTE activity briefly blocks GNSS and produces no-fix samples right
+	 * after good ones. Keep reporting the last valid position until it
+	 * goes stale instead of flapping between a fix and none.
+	 */
 	k_mutex_lock(&latest_lock, K_FOREVER);
-	*fix = latest_fix;
+	if (latest_fix.valid || !fix_is_fresh(&last_valid_fix)) {
+		*fix = latest_fix;
+	} else {
+		*fix = last_valid_fix;
+		fix->retained = true;
+	}
 	k_mutex_unlock(&latest_lock);
 
 	return fix->valid;
@@ -45,11 +68,21 @@ bool bike_gnss_get_latest(struct bike_gnss_fix *fix)
 #include <modem/lte_lc.h>
 #include <nrf_modem_gnss.h>
 
+/* The modem drops GNSS priority on its own after a fix or after 40 s. */
+#define GNSS_PRIO_WINDOW_SECONDS 40
+/* Signals a failed PVT read; must stay above every NRF_MODEM_GNSS_EVT_*. */
+#define GNSS_EVT_READ_FAILED_BIT 31
+
 static struct k_work start_work;
-static struct nrf_modem_gnss_pvt_data_frame last_pvt;
-static struct nrf_modem_gnss_pvt_data_frame current_pvt;
+static struct k_work event_work;
+static struct k_work_delayable duty_work;
+static struct nrf_modem_gnss_pvt_data_frame isr_pvt;
+static atomic_t pending_events;
 static int gnss_event_count;
 static uint8_t period_satellites_tracked;
+static bool prio_logged;
+
+K_MSGQ_DEFINE(pvt_msgq, sizeof(struct nrf_modem_gnss_pvt_data_frame), 4, 4);
 
 static int32_t degrees_to_microdegrees(double degrees)
 {
@@ -124,36 +157,18 @@ static void store_valid_fix(const struct nrf_modem_gnss_pvt_data_frame *pvt)
 	LOG_INF("GNSS satellites used: %u, accuracy: %u mm", fix.satellites_used, fix.accuracy_mm);
 }
 
-static void read_and_store_pvt(bool require_fix)
-{
-	int ret = nrf_modem_gnss_read(&last_pvt, sizeof(last_pvt), NRF_MODEM_GNSS_DATA_PVT);
-
-	if (ret != 0) {
-		store_no_fix(ret);
-		LOG_WRN("GNSS PVT read failed: %d", ret);
-		return;
-	}
-
-	if ((last_pvt.flags & NRF_MODEM_GNSS_PVT_FLAG_FIX_VALID) == 0) {
-		if (require_fix) {
-			LOG_DBG("GNSS PVT data did not contain a valid fix");
-		}
-		store_no_fix(0);
-		return;
-	}
-
-	current_pvt = last_pvt;
-	store_valid_fix(&current_pvt);
-}
-
-static void handle_pvt_event(void)
+static void process_pvt(const struct nrf_modem_gnss_pvt_data_frame *pvt)
 {
 	uint8_t satellites_tracked;
 
-	read_and_store_pvt(false);
+	if (pvt->flags & NRF_MODEM_GNSS_PVT_FLAG_FIX_VALID) {
+		store_valid_fix(pvt);
+	} else {
+		store_no_fix(0);
+	}
 
 	gnss_event_count++;
-	satellites_tracked = count_satellites_tracked(&last_pvt);
+	satellites_tracked = count_satellites_tracked(pvt);
 	if (satellites_tracked > period_satellites_tracked) {
 		period_satellites_tracked = satellites_tracked;
 	}
@@ -173,34 +188,105 @@ static void reset_search_period(void)
 	period_satellites_tracked = 0;
 }
 
+/*
+ * Runs in interrupt context: only read modem data and signal the work.
+ * Mutexes, logging, and cache updates all happen in event_work_handler.
+ */
 static void gnss_event_handler(int event)
 {
-	switch (event) {
-	case NRF_MODEM_GNSS_EVT_PVT:
-		handle_pvt_event();
-		break;
-	case NRF_MODEM_GNSS_EVT_FIX:
+	if (event == NRF_MODEM_GNSS_EVT_PVT) {
+		if (nrf_modem_gnss_read(&isr_pvt, sizeof(isr_pvt),
+					NRF_MODEM_GNSS_DATA_PVT) == 0) {
+			(void)k_msgq_put(&pvt_msgq, &isr_pvt, K_NO_WAIT);
+		} else {
+			atomic_set_bit(&pending_events,
+				       GNSS_EVT_READ_FAILED_BIT);
+		}
+	} else if (event > 0 && event < GNSS_EVT_READ_FAILED_BIT) {
+		atomic_set_bit(&pending_events, event);
+	}
+
+	(void)k_work_submit(&event_work);
+}
+
+static void event_work_handler(struct k_work *work)
+{
+	struct nrf_modem_gnss_pvt_data_frame pvt;
+	uint32_t events = (uint32_t)atomic_clear(&pending_events);
+
+	ARG_UNUSED(work);
+
+	while (k_msgq_get(&pvt_msgq, &pvt, K_NO_WAIT) == 0) {
+		process_pvt(&pvt);
+	}
+
+	if (events & BIT(GNSS_EVT_READ_FAILED_BIT)) {
+		store_no_fix(-EIO);
+		LOG_WRN("GNSS PVT read failed");
+	}
+	if (events & BIT(NRF_MODEM_GNSS_EVT_FIX)) {
 		LOG_INF("GNSS fix event");
-		read_and_store_pvt(true);
 		reset_search_period();
-		break;
-	case NRF_MODEM_GNSS_EVT_PERIODIC_WAKEUP:
+	}
+	if (events & BIT(NRF_MODEM_GNSS_EVT_PERIODIC_WAKEUP)) {
 		LOG_INF("GNSS woke up in periodic mode");
-		break;
-	case NRF_MODEM_GNSS_EVT_BLOCKED:
+	}
+	if (events & BIT(NRF_MODEM_GNSS_EVT_BLOCKED)) {
 		LOG_INF("GNSS is blocked by LTE");
-		break;
-	case NRF_MODEM_GNSS_EVT_SLEEP_AFTER_FIX:
+	}
+	if (events & BIT(NRF_MODEM_GNSS_EVT_SLEEP_AFTER_FIX)) {
 		LOG_INF("GNSS sleeping after fix");
 		reset_search_period();
-		break;
-	case NRF_MODEM_GNSS_EVT_SLEEP_AFTER_TIMEOUT:
+	}
+	if (events & BIT(NRF_MODEM_GNSS_EVT_SLEEP_AFTER_TIMEOUT)) {
 		LOG_INF("GNSS sleeping after fix retry timeout");
 		store_no_fix(0);
-		break;
-	default:
-		break;
 	}
+}
+
+static int64_t last_fix_age_ms(void)
+{
+	int64_t fix_uptime_ms;
+
+	k_mutex_lock(&latest_lock, K_FOREVER);
+	fix_uptime_ms = last_valid_fix.valid ? last_valid_fix.uptime_ms : 0;
+	k_mutex_unlock(&latest_lock);
+
+	return k_uptime_get() - fix_uptime_ms;
+}
+
+/*
+ * "Soft duty cycle": whenever the retained fix goes stale, hand the radio
+ * back to GNSS via priority mode. LTE stays registered and the MQTT
+ * session stays up (downlink is just delayed). The modem drops priority
+ * on its own after a fix or after 40 s, so keep re-arming it once per
+ * window while the fix stays stale; while fixes are fresh, sleep until
+ * the staleness deadline instead of polling.
+ */
+static void duty_work_handler(struct k_work *work)
+{
+	int64_t age_ms = last_fix_age_ms();
+	int ret;
+
+	ARG_UNUSED(work);
+
+	if (age_ms < GNSS_FIX_MAX_AGE_MS) {
+		prio_logged = false;
+		k_work_schedule(&duty_work,
+				K_MSEC(GNSS_FIX_MAX_AGE_MS - age_ms));
+		return;
+	}
+
+	ret = nrf_modem_gnss_prio_mode_enable();
+	if (ret != 0) {
+		LOG_WRN("Failed to enable GNSS priority mode: %d", ret);
+	} else if (!prio_logged) {
+		prio_logged = true;
+		LOG_INF("GNSS priority over LTE enabled (no fix for %lld s)",
+			age_ms / 1000);
+	}
+
+	k_work_schedule(&duty_work, K_SECONDS(GNSS_PRIO_WINDOW_SECONDS));
 }
 
 static void start_work_handler(struct k_work *work)
@@ -259,6 +345,7 @@ static void start_work_handler(struct k_work *work)
 		if (ret != 0) {
 			LOG_WRN("Failed to enable GNSS priority mode: %d", ret);
 		}
+		k_work_schedule(&duty_work, K_MSEC(GNSS_FIX_MAX_AGE_MS));
 	}
 
 	store_no_fix(0);
@@ -273,8 +360,11 @@ void bike_gnss_init(void)
 	};
 
 	k_mutex_init(&latest_lock);
+	last_valid_fix = (struct bike_gnss_fix){ 0 };
 	bike_gnss_store_fix(&initial);
 	k_work_init(&start_work, start_work_handler);
+	k_work_init(&event_work, event_work_handler);
+	k_work_init_delayable(&duty_work, duty_work_handler);
 	(void)k_work_submit(&start_work);
 }
 
@@ -291,6 +381,7 @@ void bike_gnss_init(void)
 	};
 
 	k_mutex_init(&latest_lock);
+	last_valid_fix = (struct bike_gnss_fix){ 0 };
 	bike_gnss_store_fix(&initial);
 	LOG_INF("GNSS disabled on this target");
 }

@@ -244,7 +244,8 @@ static int cmd_bike_gnss_status(const struct shell *sh, size_t argc, char **argv
 	(void)bike_gnss_get_latest(&fix);
 	shell_print(sh, "GNSS supported:   %s", fix.supported ? "yes" : "no");
 	shell_print(sh, "Running:          %s", fix.running ? "yes" : "no");
-	shell_print(sh, "Fix valid:        %s", fix.valid ? "yes" : "no");
+	shell_print(sh, "Fix valid:        %s%s", fix.valid ? "yes" : "no",
+		    fix.retained ? " (retained)" : "");
 	shell_print(sh, "Last update:      %lld ms", fix.uptime_ms);
 	shell_print(sh, "Last error:       %d", fix.last_error);
 

@@ -180,6 +180,11 @@ static void lte_event_handler(const struct lte_lc_evt *const evt)
 		LOG_INF("LTE cell updated: id=%u tac=%u",
 			current_status.cell_id, current_status.tac);
 		break;
+	case LTE_LC_EVT_RRC_UPDATE:
+		LOG_INF("LTE RRC mode: %s",
+			evt->rrc_mode == LTE_LC_RRC_MODE_CONNECTED ?
+				"connected" : "idle");
+		break;
 	default:
 		break;
 	}

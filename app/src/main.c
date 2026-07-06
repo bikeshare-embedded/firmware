@@ -47,6 +47,7 @@ int main(void)
 
 	if (bike_config_is_valid(bike_config_get())) {
 		(void)bike_lte_connect();
+		(void)bike_mqtt_connect();
 	}
 
 	return 0;
