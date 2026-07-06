@@ -175,9 +175,9 @@ Telemetry should include:
 - Best-effort GNSS fields when a valid fix exists.
 - An explicit no-fix indication when GNSS is unavailable.
 
-Implemented telemetry currently publishes this data periodically on `telemetry_sample_chan`; MQTT serialization and broker publication remain separate MQTT module work.
+Implemented telemetry publishes this data periodically on `telemetry_sample_chan`. `mqtt_client` observes that channel and publishes the formatted JSON payload to the telemetry topic.
 
-GNSS must not block trips, state transitions, MQTT connection, or the class demo. The implemented GNSS module starts from Zephyr system workqueue background work, caches the latest PVT fix from `nrf_modem_gnss` on nRF9160 builds, and reports no-fix when unsupported, not started, or not yet fixed.
+GNSS does not block trips, state transitions, MQTT connection, or the class demo. The GNSS module starts from Zephyr system workqueue background work, caches the latest PVT fix from `nrf_modem_gnss` on nRF9160 builds, and reports no-fix when unsupported, not started, or not yet fixed.
 
 ## Execution Model
 

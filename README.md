@@ -9,15 +9,21 @@ Embedded firmware for a shared bicycle management system built with Zephyr RTOS.
 
 The final coursework target is the Nordic Semiconductor `nRF9160 DK` using the nRF Connect SDK as the practical Zephyr-based baseline for LTE-M/NB-IoT, MQTT, GNSS, modem libraries, and board support. The host target `native_sim` is kept for local development and automated logic tests.
 
+## Team
+
+- [Ruan Tenorio](https://github.com/ruantmelo)
+- [Vinícius Neitzke](https://github.com/Neiwone)
+
 ## Documentation
 
 - [Architecture](docs/architecture.md)
 - [Requirements Traceability](docs/requirements.md)
 - [Testing and Demo Plan](docs/testing.md)
+- [Setup](#setup), [Build](#build), [Test](#test), and [Flash](#flash) below
 
-## MVP Scope
+## Features
 
-The firmware MVP is a Zephyr/NCS application that runs on one bicycle controller and provides:
+The firmware is a Zephyr/NCS application that runs on one bicycle controller and provides:
 
 - Debug UART for logs and shell access.
 - One onboard LED for state indication.
@@ -31,47 +37,7 @@ The firmware MVP is a Zephyr/NCS application that runs on one bicycle controller
 - Automated logic validation with ZTEST and Twister.
 - Best-effort GNSS telemetry when a valid fix is available.
 
-The backend, administrator dashboard, and user portal are integration context for the firmware. They are not part of this repository's firmware deliverable.
-
-## Requirement Compliance Note
-
-The assignment lists Bluetooth, Wi-Fi, Ethernet, USB ACM/NCM, or a manually implemented I2C/SPI sensor as acceptable communication/sensor requirement paths. This project uses LTE/4G as the MVP communication feature and does not implement the manual I2C/SPI sensor substitute.
-
-Because LTE/4G is not explicitly listed in the assignment text, instructor approval is required for LTE/4G to count as the communication-interface requirement. See [Requirements Traceability](docs/requirements.md).
-
-## Current Implementation Status
-
-The current repository is an early application skeleton, not the complete MVP.
-
-Implemented now:
-
-- Basic Zephyr application under `app/`.
-- Logging startup messages.
-- `bike_config` module with runtime settings for `id`, `device_token`, `mqtt_host`, `mqtt_port`, and `apn`.
-- Dedicated shell module with setup commands, `bike get`, `bike state`, and local simulation commands.
-- Initial zbus channels for button events, backend commands, state changes, and telemetry samples.
-- Initial bike state machine for `UNREGISTERED`, `AVAILABLE`, `RESERVED`, and `IN_USE` flows.
-- `led_status` module that observes bike state changes and maps them to LED patterns, using `led0` when available and a logical fallback on host simulation.
-- `button_input` module that reads the physical `sw0` button, schedules work from the GPIO interrupt, debounces hardware presses, and publishes button events to zbus.
-- Zephyr Settings using `CONFIG_SETTINGS_RUNTIME` for development-time storage.
-- Board-specific app configuration: `native_sim` and `native_sim/native/64` own TAP/static-IP networking, while `nrf9160dk_nrf9160_ns` owns GPIO/UART/NVS persistence scaffolding.
-- Initial ZTEST/Twister application for config validation, core state transitions, LED state-to-pattern mapping, LED cached-init behavior, button event publishing, and button debounce filtering.
-- NCS manifest pinned to `v2.7.0` for nRF9160 modem support.
-- Initial LTE modem module with attach/disconnect/status shell diagnostics on nRF9160.
-- MQTT client module with connect/disconnect/status shell diagnostics,
-  command-topic subscription, JSON backend command parsing, state/event
-  publishing, reconnect/backoff, token credentials, and TLS support.
-- Initial MPU6050 motion sensor module, disabled unless a matching devicetree node and `CONFIG_SENSOR` are available.
-
-Main implementation gaps before the agreed MVP:
-
-- Validate LTE attach on nRF9160 DK hardware with a real SIM/APN.
-- Validate NVS-backed Settings on hardware.
-- Validate LED GPIO behavior on nRF9160 DK hardware.
-- Validate physical button behavior on nRF9160 DK hardware.
-- Complete the `ERROR` fault path in the state machine.
-- Add best-effort GNSS telemetry.
-- Expand ZTEST/Twister suites for telemetry, timeout timing, and edge cases.
+The backend, administrator dashboard, and user portal are integration context for the firmware. They are not part of this repository.
 
 ## Target Hardware
 
@@ -80,21 +46,47 @@ Main implementation gaps before the agreed MVP:
 - If the installed SDK uses the older board naming scheme, use `nrf9160dk_nrf9160_ns` instead.
 - Required peripherals: debug UART, onboard LED, onboard button, LTE modem, GNSS.
 
-## Setup Baseline
+## Setup
+
+This repo (`bikeshare-firmware/`) is the west manifest/app repo inside a larger
+nRF Connect SDK (NCS) west workspace. The parent workspace directory (one
+level above this repo) holds the west-managed `nrf/`, `zephyr/`, `nrfxlib/`,
+`modules/`, `bootloader/`, and `.west/` directories and a
+Python virtual environment (`.venv/`).
+
+Prerequisites:
+
+- An NCS managed toolchain installed under `~/ncs/toolchains/` (for example,
+  via nRF Connect for VS Code or the `nrfutil toolchain-manager`). This
+  provides the compiler, CMake, and other build tools required for hardware
+  targets.
+- A Python virtual environment at the workspace root with `west` installed,
+  used for simple/native commands that do not need the full managed
+  toolchain:
+
+  ```bash
+  python3 -m venv .venv
+  source .venv/bin/activate
+  pip install west
+  ```
+
+- `nrfjprog`/J-Link tools available on `PATH` for flashing the `nRF9160 DK`
+  over its on-board debugger.
+
+From a fresh clone of the parent workspace fetch the west-managed dependencies once:
+
+```bash
+west update
+```
+
+## Build
 
 Use the nRF Connect SDK for the final LTE/GNSS firmware target. The app manifest now imports `sdk-nrf` `v2.7.0`, matching the local NCS workspace used for nRF9160 LTE modem libraries.
 
 Typical final hardware build command:
 
 ```bash
-source ../ncs-env.sh
 west build -b nrf9160dk/nrf9160/ns bikeshare-firmware/app -d build/nrf9160dk -p always
-```
-
-Flash command:
-
-```bash
-west flash -d build/nrf9160dk
 ```
 
 Development build for `native_sim`:
@@ -103,27 +95,36 @@ Development build for `native_sim`:
 west build -b native_sim bikeshare-firmware/app -d build/native_sim -p always
 ```
 
-If the default `native_sim` runner fails to link because the host lacks compatible 32-bit runtime libraries, use the 64-bit native simulator variant:
-
-```bash
-west build -b native_sim/native/64 bikeshare-firmware/app -d build/native_sim64 -p always
-```
-
 Run `native_sim`:
 
 ```bash
 west build -d build/native_sim -t run
 ```
 
-Run the 64-bit native simulator build:
+## Test
+
+Run the automated ZTEST/Twister suites (config validation, state transitions,
+LED mapping, button debounce, MQTT topic/command/telemetry formatting, and
+GNSS cache logic) on the host simulator. See
+[Testing and Demo Plan](docs/testing.md) for the full suite list and manual
+hardware validation checklist.
 
 ```bash
-west build -d build/native_sim64 -t run
+west twister -p native_sim/native/64 -T bikeshare-firmware/tests
+```
+
+## Flash
+
+Flash a build already produced by `west build` (see [Build](#build)) onto a
+connected `nRF9160 DK`:
+
+```bash
+west flash -d build/nrf9160dk
 ```
 
 ## Runtime Configuration
 
-The agreed MVP settings are:
+The bike settings are:
 
 - `bike/id`
 - `bike/device_token`
@@ -157,11 +158,9 @@ bike sim cancel [rental_id]
 bike sim button
 ```
 
-The demo command `bike get` may print the token for debugging. Production firmware should mask secrets.
-
 ## MQTT Broker
 
-The MVP assumes a Mosquitto broker. Because the bike reaches the broker over LTE, the broker must be reachable from the cellular network through a public IP address, router port forwarding, VPN, or a tunnel such as ngrok or Cloudflare Tunnel. A broker bound only to `localhost` or a private LAN address will not be reachable from the device.
+The firmware assumes a MQTT broker. Because the bike reaches the broker over LTE, the broker must be reachable from the cellular network through a public IP address, router port forwarding, VPN, or a tunnel such as ngrok or Cloudflare Tunnel. A broker bound only to `localhost` or a private LAN address will not be reachable from the device.
 
 MQTT topics:
 
@@ -171,6 +170,8 @@ bikes/{bike_id}/state
 bikes/{bike_id}/events
 bikes/{bike_id}/commands
 ```
+
+### Security (TLS)
 
 Production MQTT should use TLS on port `8883`. The firmware uses the bike ID
 as the MQTT username and `bike/device_token` as the password. On nRF9160, the
@@ -204,31 +205,6 @@ AT%CMNG=0,42,0,"<broker CA certificate PEM>"
 - GNSS fields are included when a valid fix exists; otherwise telemetry reports that no fix is available.
 - ZTEST/Twister suites pass for non-hardware logic.
 
-## Current Native Simulation Demo
-
-The current implementation can validate the configuration, state-machine flow, logical LED state mapping, button event flow, and transport diagnostics without GNSS or hardware NVS:
-
-```text
-bike set id BIKE_001
-bike set token TOKEN_FOR_DEMO
-bike set mqtt_host broker.example.com
-bike set mqtt_port 1883
-bike set apn internet
-bike get
-bike state
-bike sim authorize RENTAL_001
-bike state
-bike sim button
-bike state
-bike sim button
-bike state
-```
-
-Automated checks:
-
-```bash
-west twister -p native_sim/native/64 -T bikeshare-firmware/tests
-```
 
 ## Reference
 

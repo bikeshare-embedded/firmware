@@ -1,15 +1,15 @@
 # Testing and Demo Plan
 
-This document defines the planned automated tests and manual hardware validation for the Bikeshare Firmware MVP.
+This document defines the automated tests and manual hardware validation for the Bikeshare Firmware.
 
 ## Strategy
 
-Use two validation paths:
+Two validation paths:
 
 - Automated ZTEST/Twister tests on `native_sim` for deterministic firmware logic.
 - Manual hardware validation on `nRF9160 DK` for UART, LED, button, LTE, MQTT, Settings/NVS, and best-effort GNSS.
 
-The LTE modem, cellular network, MQTT broker reachability, and GNSS fix behavior are not reliable enough to be the only automated pass/fail criteria. They should be validated with a repeatable demo checklist.
+The LTE modem, cellular network, MQTT broker reachability, and GNSS fix behavior are not reliable enough to be the only automated pass/fail criteria. They are validated with a repeatable demo checklist.
 
 ## Automated Test Target
 
@@ -21,39 +21,31 @@ native_sim/native/64
 
 The test metadata also allows `native_sim`, but `native_sim/native/64` is useful on hosts that do not have the 32-bit runtime libraries needed by the default native simulator runner.
 
-Example Twister command shape:
-
-```bash
-west twister -p native_sim -T bikeshare-firmware/tests
-```
-
-Current recommended command for this workspace:
+Command:
 
 ```bash
 west twister -p native_sim/native/64 -T bikeshare-firmware/tests
 ```
 
-The repository now has an initial `tests/` application for config validation, core state transitions, LED state-to-pattern mapping, LED cached-init behavior, button event publishing, button debounce filtering, MQTT topic construction, MQTT command parsing, MQTT command status counters, and compact MQTT event formatting, telemetry sample formatting, and GNSS valid/no-fix cache transitions. Additional suites are still planned for timeout timing, transport diagnostics, and more backend edge cases.
+The `tests/` application covers config validation, core state transitions, LED state-to-pattern mapping, LED cached-init behavior, button event publishing, button debounce filtering, MQTT topic construction, MQTT command parsing, MQTT command status counters, compact MQTT event formatting, telemetry sample formatting, and GNSS valid/no-fix cache transitions.
 
-## Planned ZTEST Suites
+## ZTEST Suites
 
 | Suite             | Purpose                                                  | Example checks                                                                                                                                                     |
-| ----------------- | -------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `bike_state`      | Validate all state-machine transitions.                  | Boot rules, `AVAILABLE -> RESERVED`, `RESERVED -> IN_USE`, `IN_USE -> AVAILABLE`, error handling. Initial coverage exists.                                         |
-| `backend_command` | Validate backend command handling.                       | Accept `RENT_AUTHORIZE` only in `AVAILABLE`, accept matching `RENT_CANCEL` in `RESERVED` or `IN_USE`, reject duplicates/mismatches. Initial direct state coverage exists. |
-| `led_status` | Validate state-to-pattern mapping. | `UNREGISTERED=off`, `AVAILABLE=slow blink`, `RESERVED/IN_USE=led0 -> led1 -> led3 -> led2 chase`, `ERROR=SOS/error`. Initial coverage exists. |
-| `button_input`    | Validate button event publishing into the state machine. | Published button events move `RESERVED -> IN_USE` and `IN_USE -> AVAILABLE`; duplicate presses inside the debounce window are ignored. Initial coverage exists.    |
-| `bike_config`     | Validate configuration handling.                         | Required fields, non-empty strings, valid `mqtt_port` in `1..65535`, invalid config keeps bike `UNREGISTERED`. Initial coverage exists.                            |
-| `mqtt_client`     | Validate MQTT helper logic.                              | Topic construction, JSON command parsing, command status counters, and compact state/button event payload formatting. Initial coverage exists.                     |
-| `telemetry`       | Validate telemetry formatting logic.                     | Includes bike ID, state, `uptime_ms`, rental ID when active, trip duration, LTE status placeholder, GNSS fix/no-fix status.                                        |
+| ----------------- | -------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `bike_state`      | Validate state-machine transitions.                      | Boot rules, `AVAILABLE -> RESERVED`, `RESERVED -> IN_USE`, `IN_USE -> AVAILABLE`, rental authorize/cancel accept and reject paths.                                 |
+| `led_status`      | Validate state-to-pattern mapping.                       | `UNREGISTERED=off`, `AVAILABLE=slow blink`, `RESERVED/IN_USE=led0 -> led1 -> led3 -> led2 chase`, `ERROR=SOS/error`, cached pattern applied on init.               |
+| `button_input`    | Validate button event publishing into the state machine. | Published button events move `RESERVED -> IN_USE` and `IN_USE -> AVAILABLE`; duplicate presses inside the debounce window are ignored.                            |
+| `bike_config`     | Validate configuration handling.                         | Required fields, non-empty strings, valid `mqtt_port` in `1..65535`, invalid config keeps bike `UNREGISTERED`.                                                     |
+| `mqtt_client`     | Validate MQTT helper logic.                              | Topic construction, JSON command parsing, command status counters, and compact state/button/telemetry/event payload formatting.                                   |
+| `telemetry`       | Validate telemetry formatting logic.                     | Includes bike ID, state, `uptime_ms`, GNSS fix/no-fix status, and GNSS fix cache freshness/expiry.                                                                 |
 
 ## State-Machine Test Cases
 
-Minimum state tests:
+State tests cover:
 
 - Missing settings boot into `UNREGISTERED`.
 - Valid settings plus successful initialization boot into `AVAILABLE`.
-- Initialization failure boots into `ERROR`.
 - Button press in `UNREGISTERED` is ignored.
 - Button press in `AVAILABLE` is ignored.
 - `RENT_AUTHORIZE` in `AVAILABLE` enters `RESERVED` and stores `rental_id`.
@@ -64,7 +56,6 @@ Minimum state tests:
 - Duplicate `RENT_AUTHORIZE` in `RESERVED` is rejected.
 - Matching `RENT_CANCEL` in `IN_USE` ends the trip and returns to `AVAILABLE`.
 - Reservation timeout after 60 seconds returns to `AVAILABLE`.
-- Button press in `ERROR` is ignored.
 
 ## Configuration Tests
 
@@ -182,10 +173,9 @@ The demo is considered successful when:
 - GNSS telemetry is best-effort and does not block the demo.
 - ZTEST/Twister tests pass for non-hardware logic.
 
-## Known Test Limitations
+## Test Scope Notes
 
-- GNSS fixes may be unavailable indoors or during short demos.
-- Native-simulation tests do not exercise real `nrf_modem_gnss`, satellite acquisition, antenna behavior, or modem functional-mode interactions; they only validate cache/telemetry no-fix and valid-fix logic.
+- GNSS fixes may be unavailable indoors or during short demos; the demo accepts an explicit no-fix status.
+- Native-simulation tests validate cache/telemetry no-fix and valid-fix formatting logic; they do not exercise real `nrf_modem_gnss`, satellite acquisition, or antenna behavior.
 - LTE registration depends on SIM, antenna, network coverage, and APN configuration.
-- Local Mosquitto must be reachable from the cellular network.
-- Current repository code implements native tests for config/state/LED/button and telemetry/GNSS formatting logic plus LTE/MQTT diagnostics. Hardware validation, real GNSS fix acquisition, MQTT telemetry publication, and several planned suites are still pending.
+- Mosquitto must be reachable from the cellular network, per [Mosquitto Reachability](#mosquitto-reachability).
